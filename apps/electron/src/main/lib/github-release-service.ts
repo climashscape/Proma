@@ -155,7 +155,8 @@ export async function listReleases(
         : releaseCache.data.filter(r => !r.prerelease && !r.draft)
       return filtered.slice(0, perPage)
     }
-    return []
+    // 没有缓存时抛出异常，让前端知道加载失败
+    throw error
   }
 }
 

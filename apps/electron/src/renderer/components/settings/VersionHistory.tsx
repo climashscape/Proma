@@ -89,6 +89,23 @@ export function VersionHistory(): React.ReactElement {
             <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
             <p className="text-sm text-muted-foreground mt-2">加载中...</p>
           </div>
+        ) : error ? (
+          <div className="p-8 text-center">
+            <p className="text-sm text-destructive">加载失败</p>
+            <p className="text-xs text-muted-foreground mt-1">{error}</p>
+            <button
+              onClick={loadReleases}
+              disabled={loading}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors disabled:opacity-50"
+            >
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              重试
+            </button>
+          </div>
         ) : releases.length === 0 ? (
           <div className="p-8 text-center">
             <p className="text-sm text-muted-foreground">暂无版本历史</p>
