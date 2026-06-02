@@ -32,7 +32,15 @@ export function VersionHistory(): React.ReactElement {
       setReleases(data)
     } catch (err) {
       console.error('[版本历史] 加载失败:', err)
-      setError(err instanceof Error ? err.message : '加载失败')
+      let errorMessage = err instanceof Error ? err.message : '加载失败'
+      // 过滤掉 Electron IPC 的英文前缀，只保留中文错误信息
+      if (errorMessage.includes('Error invoking remote method')) {
+        const parts = errorMessage.split('Error:')
+        if (parts.length > 1) {
+          errorMessage = parts[parts.length - 1].trim()
+        }
+      }
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -75,11 +83,6 @@ export function VersionHistory(): React.ReactElement {
             刷新
           </button>
         </div>
-        {error && (
-          <p className="text-xs text-destructive mt-2">
-            {error}
-          </p>
-        )}
       </div>
 
       {/* 版本列表 */}
@@ -91,20 +94,8 @@ export function VersionHistory(): React.ReactElement {
           </div>
         ) : error ? (
           <div className="p-8 text-center">
-            <p className="text-sm text-destructive">加载失败</p>
+            <p className="text-sm text-muted-foreground">加载失败</p>
             <p className="text-xs text-muted-foreground mt-1">{error}</p>
-            <button
-              onClick={loadReleases}
-              disabled={loading}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors disabled:opacity-50"
-            >
-              {loading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              重试
-            </button>
           </div>
         ) : releases.length === 0 ? (
           <div className="p-8 text-center">
