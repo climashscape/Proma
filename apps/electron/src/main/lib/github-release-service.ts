@@ -155,7 +155,7 @@ export async function listReleases(
       return filtered.slice(0, perPage)
     }
     // 没有缓存时抛出异常，让前端知道加载失败
-    throw error
+    throw error instanceof Error ? error : new Error(String(error))
   }
 }
 

@@ -37,7 +37,11 @@ export function VersionHistory(): React.ReactElement {
       if (errorMessage.includes('Error invoking remote method')) {
         const parts = errorMessage.split('Error:')
         if (parts.length > 1) {
-          errorMessage = parts[parts.length - 1].trim()
+          const lastPart = parts[parts.length - 1].trim()
+          // 确保截取后还有有效内容
+          if (lastPart) {
+            errorMessage = lastPart
+          }
         }
       }
       setError(errorMessage)
