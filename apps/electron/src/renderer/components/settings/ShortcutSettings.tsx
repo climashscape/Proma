@@ -10,7 +10,7 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { RotateCcw, Loader2 } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
