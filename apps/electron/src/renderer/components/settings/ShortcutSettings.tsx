@@ -304,7 +304,7 @@ export function ShortcutSettings(): React.ReactElement {
     const abortController = new AbortController()
 
     const checkAvailability = async () => {
-      const shortcutsToCheck = DEFAULT_SHORTCUTS.filter((s) => !s.readonly)
+      const shortcutsToCheck = DEFAULT_SHORTCUTS.filter((s) => !s.readonly && s.global)
       // 初始状态设为 checking
       const initialState: Record<string, 'checking' | 'available' | 'unavailable' | 'unknown'> = {}
       for (const def of shortcutsToCheck) {
@@ -318,12 +318,6 @@ export function ShortcutSettings(): React.ReactElement {
         const accel = getActiveAccelerator(def.id)
         if (!accel || accel === null) {
           setGlobalShortcutAvailability((prev) => ({ ...prev, [def.id]: 'unknown' }))
-          continue
-        }
-
-        // 非全局快捷键不需要检测系统可用性（系统级检测只针对全局快捷键）
-        if (!def.global) {
-          setGlobalShortcutAvailability((prev) => ({ ...prev, [def.id]: 'available' }))
           continue
         }
 
@@ -716,8 +710,8 @@ export function ShortcutSettings(): React.ReactElement {
                               <TooltipContent side="top">恢复默认快捷键</TooltipContent>
                             </Tooltip>
                           )}
-                          {/* 快捷键系统可用性指示器（全局快捷键检测系统占用，非全局快捷键默认显示可用） */}
-                          {!isDisabled && recordingId !== def.id && (
+                          {/* 系统可用性指示器（仅全局快捷键显示） */}
+                          {def.global && !isDisabled && recordingId !== def.id && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className={`inline-flex items-center justify-center size-5 rounded-full text-[10px] font-bold ${
