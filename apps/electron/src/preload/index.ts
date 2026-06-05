@@ -920,6 +920,8 @@ export interface ElectronAPI {
   hideQuickTask: () => Promise<void>
   /** 重新注册全局快捷键（设置变更后） */
   reregisterGlobalShortcuts: () => Promise<Record<string, boolean>>
+  /** 检查全局快捷键是否可被系统注册 */
+  checkGlobalShortcutAvailability: (accelerator: string) => Promise<boolean>
   /** 订阅快速任务窗口聚焦事件 */
   onQuickTaskFocus: (callback: () => void) => () => void
   /** 订阅快速任务打开会话事件（主窗口接收，由渲染进程负责创建会话） */
@@ -2147,6 +2149,10 @@ const electronAPI: ElectronAPI = {
 
   reregisterGlobalShortcuts: () => {
     return ipcRenderer.invoke(QUICK_TASK_IPC_CHANNELS.REREGISTER_GLOBAL_SHORTCUTS)
+  },
+
+  checkGlobalShortcutAvailability: (accelerator: string) => {
+    return ipcRenderer.invoke('global-shortcut:check-availability', accelerator)
   },
 
   onQuickTaskFocus: (callback: () => void) => {

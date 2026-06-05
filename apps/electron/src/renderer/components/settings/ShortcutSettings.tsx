@@ -273,6 +273,30 @@ export function ShortcutSettings(): React.ReactElement {
   const [sendWithCmdEnter, setSendWithCmdEnter] = useAtom(sendWithCmdEnterAtom)
   // 当前正在录制的快捷键 id，用于隐藏并列操作按钮，避免与录制中途的 state 冲突
   const [recordingId, setRecordingId] = React.useState<string | null>(null)
+  // 全局快捷键可用性状态：shortcutId → boolean（true=可用, false=被占用）
+  const [globalShortcutAvailability, setGlobalShortcutAvailability] = React.useState<Record<string, boolean>>({})
+
+  // 检测全局快捷键可用性
+  React.useEffect(() => {
+    const checkAvailability = async () => {
+      const globalShortcuts = DEFAULT_SHORTCUTS.filter((s) => s.global)
+      const results: Record<string, boolean> = {}
+      for (const def of globalShortcuts) {
+        const accel = getActiveAccelerator(def.id)
+        if (accel && accel !== null) {
+          try {
+            results[def.id] = await window.electronAPI.checkGlobalShortcutAvailability(accel)
+          } catch {
+            results[def.id] = true // 检测失败时默认认为可用
+          }
+        } else {
+          results[def.id] = true // 未启用时不显示冲突
+        }
+      }
+      setGlobalShortcutAvailability(results)
+    }
+    checkAvailability()
+  }, [overrides]) // 当快捷键覆盖变化时重新检测
 
   const handleRecordingChange = React.useCallback(
     (shortcutId: string, active: boolean) => {
@@ -640,6 +664,25 @@ export function ShortcutSettings(): React.ReactElement {
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent side="top">恢复默认快捷键</TooltipContent>
+                            </Tooltip>
+                          )}
+                          {/* 全局快捷键系统可用性指示器 */}
+                          {def.global && !isDisabled && recordingId !== def.id && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className={`inline-flex items-center justify-center size-5 rounded-full text-[10px] font-bold ${
+                                  globalShortcutAvailability[def.id] === false
+                                    ? 'bg-destructive/15 text-destructive'
+                                    : 'bg-emerald-500/15 text-emerald-600'
+                                }`}>
+                                  {globalShortcutAvailability[def.id] === false ? '!' : '✓'}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                {globalShortcutAvailability[def.id] === false
+                                  ? '该快捷键可能已被系统或其他应用占用'
+                                  : '该快捷键当前可被系统注册'}
+                              </TooltipContent>
                             </Tooltip>
                           )}
                         </>

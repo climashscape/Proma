@@ -105,6 +105,39 @@ function registerOne(id: string): boolean {
 }
 
 /**
+ * 检查某个 accelerator 是否可被注册为全局快捷键
+ *
+ * 原理：尝试注册一个 dummy callback，成功则立即注销并返回 true，
+ * 失败则返回 false。不会影响当前已注册的全局快捷键。
+ *
+ * 注意：传入的 accelerator 需要先通过 getGlobalAccelerator 转换为 Electron 标准格式
+ *（如将 Cmd 转为 CommandOrControl），否则 macOS 上检测会失败。
+ */
+export function checkGlobalAcceleratorAvailability(accelerator: string): boolean {
+  if (!accelerator) return false
+
+  // 转换为 Electron 标准格式（与 getGlobalAccelerator 保持一致）
+  const normalizedAccel = accelerator
+    .split('+')
+    .map((part) => part.trim().toLowerCase() === 'cmd' ? 'CommandOrControl' : part)
+    .join('+')
+
+  // 如果该 accelerator 已经被 Proma 自己注册了，说明可用
+  if (registeredAccelerators.has(normalizedAccel)) return true
+
+  try {
+    const success = globalShortcut.register(normalizedAccel, () => {})
+    if (success) {
+      globalShortcut.unregister(normalizedAccel)
+      return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
  * 注册全局快捷键回调
  *
  * 在 app.whenReady() 后调用。设置回调函数并尝试注册。

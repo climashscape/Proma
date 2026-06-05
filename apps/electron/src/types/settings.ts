@@ -296,6 +296,12 @@ export const QUICK_TASK_IPC_CHANNELS = {
   REREGISTER_GLOBAL_SHORTCUTS: 'quick-task:reregister-global-shortcuts',
 } as const
 
+/** 全局快捷键 IPC 通道 */
+export const GLOBAL_SHORTCUT_IPC_CHANNELS = {
+  /** 检查全局快捷键可用性 */
+  CHECK_AVAILABILITY: 'global-shortcut:check-availability',
+} as const
+
 /** 语音输入 IPC 通道 */
 export const VOICE_DICTATION_IPC_CHANNELS = {
   /** 获取语音输入设置 */

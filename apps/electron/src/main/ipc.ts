@@ -3876,6 +3876,15 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 检查全局快捷键可用性
+  ipcMain.handle(
+    'global-shortcut:check-availability',
+    async (_, accelerator: string): Promise<boolean> => {
+      const { checkGlobalAcceleratorAvailability } = await import('./lib/global-shortcut-service')
+      return checkGlobalAcceleratorAvailability(accelerator)
+    }
+  )
+
   // ===== 语音输入 =====
 
   ipcMain.handle(
