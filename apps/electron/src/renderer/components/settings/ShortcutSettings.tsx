@@ -278,6 +278,27 @@ export function ShortcutSettings(): React.ReactElement {
     Record<string, 'checking' | 'available' | 'unavailable' | 'unknown'>
   >({})
 
+  // 计算所有快捷键的 Proma 内部冲突状态
+  const internalConflicts = React.useMemo(() => {
+    const conflicts: Record<string, string | null> = {}
+    for (const def of DEFAULT_SHORTCUTS) {
+      if (def.readonly) continue
+      const accel = getActiveAccelerator(def.id)
+      if (!accel) {
+        conflicts[def.id] = null
+        continue
+      }
+      const conflictId = checkConflict(accel, def.id)
+      if (conflictId) {
+        const conflictDef = DEFAULT_SHORTCUTS.find((s) => s.id === conflictId)
+        conflicts[def.id] = conflictDef?.name ?? conflictId
+      } else {
+        conflicts[def.id] = null
+      }
+    }
+    return conflicts
+  }, [overrides])
+
   // 检测全局快捷键可用性
   React.useEffect(() => {
     const abortController = new AbortController()
@@ -719,6 +740,19 @@ export function ShortcutSettings(): React.ReactElement {
                                     : globalShortcutAvailability[def.id] === 'unknown'
                                       ? '无法检测快捷键可用性（检测失败）'
                                       : '该快捷键当前可被系统注册'}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          {/* 非全局快捷键 Proma 内部冲突指示器 */}
+                          {!def.global && !isDisabled && recordingId !== def.id && internalConflicts[def.id] && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex items-center justify-center size-5 rounded-full text-[10px] font-bold bg-destructive/15 text-destructive">
+                                  !
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                与「{internalConflicts[def.id]}」冲突
                               </TooltipContent>
                             </Tooltip>
                           )}
