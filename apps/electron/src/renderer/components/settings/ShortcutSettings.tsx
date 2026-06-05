@@ -299,25 +299,31 @@ export function ShortcutSettings(): React.ReactElement {
     return conflicts
   }, [overrides])
 
-  // 检测全局快捷键可用性
+  // 检测所有快捷键的系统可用性
   React.useEffect(() => {
     const abortController = new AbortController()
 
     const checkAvailability = async () => {
-      const globalShortcuts = DEFAULT_SHORTCUTS.filter((s) => s.global)
+      const shortcutsToCheck = DEFAULT_SHORTCUTS.filter((s) => !s.readonly)
       // 初始状态设为 checking
       const initialState: Record<string, 'checking' | 'available' | 'unavailable' | 'unknown'> = {}
-      for (const def of globalShortcuts) {
+      for (const def of shortcutsToCheck) {
         initialState[def.id] = 'checking'
       }
       setGlobalShortcutAvailability(initialState)
 
-      for (const def of globalShortcuts) {
+      for (const def of shortcutsToCheck) {
         if (abortController.signal.aborted) return
 
         const accel = getActiveAccelerator(def.id)
         if (!accel || accel === null) {
           setGlobalShortcutAvailability((prev) => ({ ...prev, [def.id]: 'unknown' }))
+          continue
+        }
+
+        // 非全局快捷键不需要检测系统可用性（系统级检测只针对全局快捷键）
+        if (!def.global) {
+          setGlobalShortcutAvailability((prev) => ({ ...prev, [def.id]: 'available' }))
           continue
         }
 
@@ -710,8 +716,8 @@ export function ShortcutSettings(): React.ReactElement {
                               <TooltipContent side="top">恢复默认快捷键</TooltipContent>
                             </Tooltip>
                           )}
-                          {/* 全局快捷键系统可用性指示器 */}
-                          {def.global && !isDisabled && recordingId !== def.id && (
+                          {/* 快捷键系统可用性指示器（全局快捷键检测系统占用，非全局快捷键默认显示可用） */}
+                          {!isDisabled && recordingId !== def.id && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className={`inline-flex items-center justify-center size-5 rounded-full text-[10px] font-bold ${
@@ -743,8 +749,8 @@ export function ShortcutSettings(): React.ReactElement {
                               </TooltipContent>
                             </Tooltip>
                           )}
-                          {/* 非全局快捷键 Proma 内部冲突指示器 */}
-                          {!def.global && !isDisabled && recordingId !== def.id && internalConflicts[def.id] && (
+                          {/* Proma 内部冲突指示器 */}
+                          {!isDisabled && recordingId !== def.id && internalConflicts[def.id] && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="inline-flex items-center justify-center size-5 rounded-full text-[10px] font-bold bg-destructive/15 text-destructive">
