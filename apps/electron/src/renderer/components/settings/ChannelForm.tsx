@@ -26,6 +26,7 @@ import {
 import { toast } from 'sonner'
 import { useSetAtom } from 'jotai'
 import { channelFormDirtyAtom } from '@/atoms/settings-tab'
+import { channelsAtom } from '@/atoms/chat-atoms'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -166,6 +167,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   const [showExitDialog, setShowExitDialog] = React.useState(false)
 
   const setChannelFormDirty = useSetAtom(channelFormDirtyAtom)
+  const setChannels = useSetAtom(channelsAtom)
   const lastAgentEligibleRef = React.useRef(channel ? isAgentEligibleChannel(channel) : false)
 
   React.useEffect(() => {
@@ -212,6 +214,16 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
         enabled: currentEnabled,
         thinkingMode: currentThinkingMode,
         thinkingBudgetTokens: currentThinkingBudgetTokens,
+      })
+      // 刷新 channelsAtom，确保 UI 层获取最新渠道配置
+      setChannels((prev) => {
+        const index = prev.findIndex((c) => c.id === channel.id)
+        if (index >= 0) {
+          const next = [...prev]
+          next[index] = savedChannel
+          return next
+        }
+        return prev
       })
       const eligible = isAgentEligibleChannel(savedChannel)
       if (eligible !== lastAgentEligibleRef.current) {
