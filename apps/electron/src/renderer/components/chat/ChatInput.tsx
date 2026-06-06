@@ -32,6 +32,7 @@ import {
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
 import {
   conversationDraftsAtom,
+  channelsAtom,
 } from '@/atoms/chat-atoms'
 import type { PendingAttachment } from '@/atoms/chat-atoms'
 import {
@@ -81,6 +82,9 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
 
   const [selectedModel] = useConversationModel()
   const [thinkingEnabled, setThinkingEnabled] = useConversationThinkingEnabled()
+  const channels = useAtomValue(channelsAtom)
+  const channel = channels.find((c) => c.id === selectedModel?.channelId)
+  const isThinkingDisabled = channel?.thinkingMode === 'disabled'
   const setPendingAttachments = onSetPendingAttachments
   const [isDragOver, setIsDragOver] = React.useState(false)
 
@@ -297,15 +301,20 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
               size="icon"
               className={cn(
                 'size-[36px] shrink-0 rounded-full',
-                thinkingEnabled ? 'text-green-500' : 'text-foreground/60 hover:text-foreground'
+                isThinkingDisabled
+                  ? 'text-foreground/30 cursor-not-allowed'
+                  : thinkingEnabled
+                    ? 'text-green-500'
+                    : 'text-foreground/60 hover:text-foreground'
               )}
-              onClick={() => setThinkingEnabled(!thinkingEnabled)}
+              onClick={() => !isThinkingDisabled && setThinkingEnabled(!thinkingEnabled)}
+              disabled={isThinkingDisabled}
             >
               <Brain className="size-5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{thinkingEnabled ? '关闭思考模式' : '开启思考模式'}</p>
+            <p>{isThinkingDisabled ? '思考模式已禁用（渠道配置）' : thinkingEnabled ? '关闭思考模式' : '开启思考模式'}</p>
           </TooltipContent>
         </Tooltip>
       ),

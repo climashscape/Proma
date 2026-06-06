@@ -141,10 +141,11 @@ function getUserTextFromSDKMessage(message: SDKMessage): string | null {
 
 interface AgentThinkingPopoverProps {
   agentThinking: import('@proma/shared').ThinkingConfig | undefined
+  isDisabled: boolean
   onToggle: () => void
 }
 
-function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverProps): React.ReactElement {
+function AgentThinkingPopover({ agentThinking, isDisabled, onToggle }: AgentThinkingPopoverProps): React.ReactElement {
   const [thinkingExpanded, setThinkingExpanded] = useAtom(thinkingExpandedAtom)
   const [open, setOpen] = React.useState(false)
   const hoverTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -175,11 +176,16 @@ function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverP
           size="icon"
           className={cn(
             'size-[36px] rounded-full',
-            isEnabled ? 'text-green-500' : 'text-foreground/60 hover:text-foreground'
+            isDisabled
+              ? 'text-foreground/30 cursor-not-allowed'
+              : isEnabled
+                ? 'text-green-500'
+                : 'text-foreground/60 hover:text-foreground'
           )}
-          onClick={onToggle}
+          onClick={isDisabled ? undefined : onToggle}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          disabled={isDisabled}
         >
           <Brain className="size-5" />
         </Button>
@@ -199,6 +205,7 @@ function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverP
             <Switch
               checked={isEnabled}
               onCheckedChange={onToggle}
+              disabled={isDisabled}
               className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
             />
           </div>
@@ -208,6 +215,7 @@ function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverP
             <Switch
               checked={thinkingExpanded}
               onCheckedChange={setThinkingExpanded}
+              disabled={isDisabled}
               className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
             />
           </div>
@@ -1854,6 +1862,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       node: (
         <AgentThinkingPopover
           agentThinking={agentThinking}
+          isDisabled={globalChannels.find((c) => c.id === agentChannelId)?.thinkingMode === 'disabled'}
           onToggle={() => {
             const next = agentThinking?.type === 'adaptive'
               ? { type: 'disabled' as const }
