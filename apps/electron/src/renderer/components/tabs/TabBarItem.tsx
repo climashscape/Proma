@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { useAtomValue } from 'jotai'
-import { FileText, StickyNote, X, Clock, PinOff, Pin } from 'lucide-react'
+import { FileText, StickyNote, X, Clock, PinOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import type { TabType, TabMinimapItem } from '@/atoms/tab-atoms'
@@ -172,7 +172,6 @@ export function TabBarItem({
           <span className="flex-1" />
         ) : (
           <span className="flex-1 min-w-0 truncate text-left flex items-center gap-1">
-            {isPinned && <Pin size={10} className="shrink-0 text-primary/50" />}
             {isAutomation && <Clock className="size-3 shrink-0 text-foreground/40" />}
             {title}
           </span>

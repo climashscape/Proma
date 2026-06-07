@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { Check, FolderOpen, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, FolderOpen, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
@@ -153,11 +153,11 @@ export function WorkspaceSelector(): React.ReactElement {
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] font-medium text-foreground/70 hover:bg-foreground/[0.04] transition-colors titlebar-no-drag"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-[10px] text-[13px] font-medium text-foreground/70 bg-primary/5 hover:bg-primary/10 transition-colors duration-100 titlebar-no-drag border border-dashed border-[hsl(var(--dashed-border))] hover:border-[hsl(var(--dashed-border-hover))]"
           >
             <FolderOpen size={14} className="flex-shrink-0 text-foreground/40" />
             <span className="flex-1 min-w-0 truncate text-left">{currentWorkspace?.name ?? '项目'}</span>
-            <span className="text-foreground/25 text-[10px]">▼</span>
+            <ChevronDown size={12} className="flex-shrink-0 text-foreground/30" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56 z-[9999] min-w-0 p-0.5">

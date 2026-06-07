@@ -286,7 +286,11 @@ function TabBarInner({
             id={tab.id}
             type={tab.type}
             title={tab.title}
-            workspaceName={tab.type === 'agent' ? workspaceNameBySessionId.get(tab.sessionId) : undefined}
+            workspaceName={
+              tab.type === 'agent' ? workspaceNameBySessionId.get(tab.sessionId)
+              : tab.type === 'chat' && tab.pinned ? 'Chat'
+              : undefined
+            }
             isAutomation={tab.type === 'agent' && automationSessionIds.has(tab.sessionId)}
             isPinned={!!tab.pinned}
             isActive={tab.id === activeTabId}
