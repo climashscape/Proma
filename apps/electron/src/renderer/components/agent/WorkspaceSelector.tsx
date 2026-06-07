@@ -160,7 +160,7 @@ export function WorkspaceSelector(): React.ReactElement {
             <ChevronDown size={12} className="flex-shrink-0 text-foreground/30" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-56 min-w-0 p-0.5">
+        <DropdownMenuContent align="start" className="w-56 z-[200] min-w-0 p-0.5">
           {workspaces.map((ws) => (
             <DropdownMenuItem
               key={ws.id}

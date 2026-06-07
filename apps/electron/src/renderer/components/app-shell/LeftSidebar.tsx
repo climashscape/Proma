@@ -1435,8 +1435,13 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </Tooltip>
       </div>
 
-      {/* 新对话/新会话按钮 + 搜索按钮 + 工作区选择器（Agent 模式） */}
+      {/* 工作区选择器（Agent 模式，放在最前）/ 新对话/新会话按钮 + 搜索按钮 */}
       <div className="px-3 pt-2 flex items-center gap-1.5">
+        {mode === 'agent' && (
+          <div className="flex-1 min-w-0 titlebar-no-drag">
+            <WorkspaceSelector />
+          </div>
+        )}
         <button
           onClick={mode === 'agent' ? handleNewAgentSession : handleNewConversation}
           className={cn(
@@ -1458,11 +1463,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           </TooltipTrigger>
           <TooltipContent side="bottom">搜索 ({getAcceleratorDisplay(getActiveAccelerator('global-search'))})</TooltipContent>
         </Tooltip>
-        {mode === 'agent' && (
-          <div className="flex-1 min-w-0 titlebar-no-drag">
-            <WorkspaceSelector />
-          </div>
-        )}
       </div>
 
       {/* 自动任务入口：作为任务中心入口放在置顶区上方，不参与置顶列表层级。 */}
@@ -2249,7 +2249,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
             startEdit()
           }}
           className={cn(
-            'group relative w-full flex items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1.5 transition-colors duration-100 titlebar-no-drag text-left',
+            'group relative w-full flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors duration-100 titlebar-no-drag text-left',
             active && 'agent-session-item-active',
             leftAccent
               ? SESSION_ACCENT_ROW_CLASS[leftAccent]

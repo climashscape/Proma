@@ -470,53 +470,19 @@ ${skillList}
 
   return (
     <div className="space-y-4">
-      {/* 项目排序 */}
-      <SettingsSection title="项目排序" description="拖拽调整项目在侧边栏下拉选择器中的显示顺序">
-        <SettingsCard>
-          {workspaces.map((ws) => (
-            <div key={ws.id} className="relative">
-              {dropIndicator?.id === ws.id && dropIndicator.position === 'before' && (
-                <div className="absolute top-0 left-4 right-4 h-0.5 bg-primary rounded-full z-10" />
-              )}
-              <div
-                draggable
-                onDragStart={(e) => handleDragStart(e, ws.id)}
-                onDragOver={(e) => handleDragOver(e, ws.id)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, ws.id)}
-                onDragEnd={handleDragEnd}
-                className={cn(
-                  'group w-full flex items-center gap-2 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing',
-                  dragId === ws.id ? 'opacity-40' : 'hover:bg-muted/50',
-                  ws.id === currentWorkspaceId && 'font-medium',
-                )}
-              >
-                <GripVertical size={14} className="flex-shrink-0 text-muted-foreground/40 group-hover:text-muted-foreground" />
-                <FolderOpen size={16} className="flex-shrink-0 text-muted-foreground" />
-                <span className="flex-1 min-w-0 truncate text-sm">{ws.name}</span>
-                {ws.id === currentWorkspaceId && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">当前</span>
-                )}
-              </div>
-              {dropIndicator?.id === ws.id && dropIndicator.position === 'after' && (
-                <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-primary rounded-full z-10" />
-              )}
-            </div>
-          ))}
-        </SettingsCard>
-      </SettingsSection>
-
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="relative flex rounded-xl bg-muted p-1">
           <div
             className={cn(
-              'mode-slider absolute top-1 bottom-1 w-[calc(33.333%-3px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
-              activeTab === 'skills' && 'translate-x-0',
-              activeTab === 'mcp' && 'translate-x-[100%]',
-              activeTab === 'tools' && 'translate-x-[200%]',
+              'mode-slider absolute top-1 bottom-1 w-[calc(25%-3px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
+              activeTab === 'workspaces' && 'translate-x-0',
+              activeTab === 'skills' && 'translate-x-[100%]',
+              activeTab === 'mcp' && 'translate-x-[200%]',
+              activeTab === 'tools' && 'translate-x-[300%]',
             )}
           />
           {[
+            { value: 'workspaces', label: '项目排序' },
             { value: 'skills', label: 'Skills' },
             { value: 'mcp', label: 'MCP' },
             { value: 'tools', label: '内置工具' },
@@ -535,6 +501,44 @@ ${skillList}
             </button>
           ))}
         </div>
+
+        {/* ===== 项目排序 Tab ===== */}
+        <TabsContent value="workspaces" className="mt-4 space-y-4">
+          <SettingsSection title="项目排序" description="拖拽调整项目在侧边栏下拉选择器中的显示顺序">
+            <SettingsCard>
+              {workspaces.map((ws) => (
+                <div key={ws.id} className="relative">
+                  {dropIndicator?.id === ws.id && dropIndicator.position === 'before' && (
+                    <div className="absolute top-0 left-4 right-4 h-0.5 bg-primary rounded-full z-10" />
+                  )}
+                  <div
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, ws.id)}
+                    onDragOver={(e) => handleDragOver(e, ws.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, ws.id)}
+                    onDragEnd={handleDragEnd}
+                    className={cn(
+                      'group w-full flex items-center gap-2 px-4 py-2.5 transition-colors cursor-grab active:cursor-grabbing',
+                      dragId === ws.id ? 'opacity-40' : 'hover:bg-muted/50',
+                      ws.id === currentWorkspaceId && 'font-medium',
+                    )}
+                  >
+                    <GripVertical size={14} className="flex-shrink-0 text-muted-foreground/40 group-hover:text-muted-foreground" />
+                    <FolderOpen size={16} className="flex-shrink-0 text-muted-foreground" />
+                    <span className="flex-1 min-w-0 truncate text-sm">{ws.name}</span>
+                    {ws.id === currentWorkspaceId && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">当前</span>
+                    )}
+                  </div>
+                  {dropIndicator?.id === ws.id && dropIndicator.position === 'after' && (
+                    <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-primary rounded-full z-10" />
+                  )}
+                </div>
+              ))}
+            </SettingsCard>
+          </SettingsSection>
+        </TabsContent>
 
         {/* ===== Skills Tab ===== */}
         <TabsContent value="skills" className="mt-4 space-y-4">
