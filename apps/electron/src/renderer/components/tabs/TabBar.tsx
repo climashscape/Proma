@@ -19,7 +19,7 @@ import {
 } from '@/atoms/tab-atoms'
 import type { TabItem } from '@/atoms/tab-atoms'
 import type { SessionIndicatorStatus } from '@/atoms/agent-atoms'
-import { currentConversationIdAtom } from '@/atoms/chat-atoms'
+import { conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import {
   agentSessionsAtom,
   agentWorkspacesAtom,
@@ -46,6 +46,8 @@ export function TabBar(): React.ReactElement {
   const setCurrentConversationId = useSetAtom(currentConversationIdAtom)
   const setCurrentAgentSessionId = useSetAtom(currentAgentSessionIdAtom)
   const agentSessions = useAtomValue(agentSessionsAtom)
+  const setAgentSessions = useSetAtom(agentSessionsAtom)
+  const setConversations = useSetAtom(conversationsAtom)
   const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
   const setCurrentAgentWorkspaceId = useSetAtom(currentAgentWorkspaceIdAtom)
   const setUnviewedCompleted = useSetAtom(unviewedCompletedSessionIdsAtom)
@@ -140,13 +142,17 @@ export function TabBar(): React.ReactElement {
     })
     if (newActiveId) setActiveTabId(newActiveId)
 
-    // 同步更新 session/conversation 元数据
+    // 同步更新 session/conversation 元数据并更新 atom
     if (tab.type === 'agent') {
-      window.electronAPI.togglePinAgentSession(tab.sessionId).catch(console.error)
+      window.electronAPI.togglePinAgentSession(tab.sessionId).then((updated) => {
+        setAgentSessions((prev) => prev.map((s) => s.id === updated.id ? updated : s))
+      }).catch(console.error)
     } else if (tab.type === 'chat') {
-      window.electronAPI.togglePinConversation(tab.sessionId).catch(console.error)
+      window.electronAPI.togglePinConversation(tab.sessionId).then((updated) => {
+        setConversations((prev) => prev.map((c) => c.id === updated.id ? updated : c))
+      }).catch(console.error)
     }
-  }, [tabs, setTabs, setActiveTabId, store])
+  }, [tabs, setTabs, setActiveTabId, store, setAgentSessions, setConversations])
 
   const handleDragStart = React.useCallback((tabId: string, e: React.PointerEvent) => {
     if (e.button !== 0) return // 只处理左键

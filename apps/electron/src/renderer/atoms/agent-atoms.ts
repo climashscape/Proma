@@ -1003,3 +1003,6 @@ export const stoppedByUserSessionsAtom = atom<Set<string>>(new Set<string>())
 
 /** AgentSettingsInitializer 是否已完成加载（渠道/工作区/设置全部就绪） */
 export const agentSettingsReadyAtom = atom(false)
+
+/** AgentSettings 内部激活的 Tab（skills / workspaces / mcp / tools） */
+export const agentSettingsTabAtom = atom<string>('skills')

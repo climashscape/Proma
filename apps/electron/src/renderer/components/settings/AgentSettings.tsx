@@ -28,6 +28,7 @@ import {
   currentAgentSessionIdAtom,
   agentPendingPromptAtom,
   workspaceCapabilitiesVersionAtom,
+  agentSettingsTabAtom,
 } from '@/atoms/agent-atoms'
 import { useProjectActions } from '@/hooks/useProjectActions'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
@@ -194,7 +195,7 @@ export function AgentSettings(): React.ReactElement {
   const handleDragEnd = (): void => { setDragId(null); setDropIndicator(null) }
 
   // Tab & view state
-  const [activeTab, setActiveTab] = React.useState('skills')
+  const [activeTab, setActiveTab] = useAtom(agentSettingsTabAtom)
   const [viewMode, setViewMode] = React.useState<ViewMode>('list')
   const [editingServer, setEditingServer] = React.useState<EditingServer | null>(null)
 

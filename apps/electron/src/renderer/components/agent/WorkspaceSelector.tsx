@@ -6,8 +6,8 @@
  */
 
 import * as React from 'react'
-import { useAtom } from 'jotai'
-import { Check, ChevronDown, FolderOpen, Pencil, Plus, Trash2 } from 'lucide-react'
+import { useAtom, useSetAtom } from 'jotai'
+import { Check, ChevronDown, FolderOpen, Pencil, Plus, Trash2, ArrowRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
@@ -34,7 +34,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { agentSessionsAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
+import { agentSessionsAtom, agentWorkspacesAtom, agentSettingsTabAtom } from '@/atoms/agent-atoms'
+import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
 import { useProjectActions } from '@/hooks/useProjectActions'
 import type { AgentWorkspace } from '@proma/shared'
 
@@ -42,6 +43,9 @@ export function WorkspaceSelector(): React.ReactElement {
   const { workspaces, currentWorkspaceId, selectProject, createProject } = useProjectActions()
   const [, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [, setAgentSessions] = useAtom(agentSessionsAtom)
+  const setSettingsTab = useSetAtom(settingsTabAtom)
+  const setSettingsOpen = useSetAtom(settingsOpenAtom)
+  const setAgentSettingsTab = useSetAtom(agentSettingsTabAtom)
 
   const currentWorkspace = workspaces.find((w) => w.id === currentWorkspaceId)
 
@@ -199,6 +203,17 @@ export function WorkspaceSelector(): React.ReactElement {
           >
             <Pencil size={14} />
             重命名当前项目
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-xs py-1.5 [&>svg]:size-3.5"
+            onSelect={() => {
+              setAgentSettingsTab('workspaces')
+              setSettingsTab('agent')
+              setSettingsOpen(true)
+            }}
+          >
+            <ArrowRight size={14} />
+            项目排序设置...
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-xs py-1.5 [&>svg]:size-3.5"
