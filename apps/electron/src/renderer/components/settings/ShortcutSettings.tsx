@@ -299,12 +299,13 @@ export function ShortcutSettings(): React.ReactElement {
     return conflicts
   }, [overrides])
 
-  // 检测所有快捷键的系统可用性
+  // 检测所有快捷键的系统可用性（包括全局和应用级）
   React.useEffect(() => {
     const abortController = new AbortController()
 
     const checkAvailability = async () => {
-      const shortcutsToCheck = DEFAULT_SHORTCUTS.filter((s) => !s.readonly && s.global)
+      // 检测所有非 readonly 快捷键（不再限制为仅全局快捷键）
+      const shortcutsToCheck = DEFAULT_SHORTCUTS.filter((s) => !s.readonly)
       // 初始状态设为 checking
       const initialState: Record<string, 'checking' | 'available' | 'unavailable' | 'unknown'> = {}
       for (const def of shortcutsToCheck) {
@@ -374,6 +375,21 @@ export function ShortcutSettings(): React.ReactElement {
     [],
   )
 
+  // 重新注册应用级快捷键（设置变更后调用）
+  const reregisterAppShortcutsIfNeeded = React.useCallback(
+    async (shortcutId: string): Promise<void> => {
+      const def = DEFAULT_SHORTCUTS.find((s) => s.id === shortcutId)
+      if (def?.global) return // 全局快捷键走 reregisterGlobalShortcut
+
+      try {
+        await window.electronAPI.reregisterAppShortcuts()
+      } catch (error) {
+        console.error(error)
+      }
+    },
+    [],
+  )
+
   // 保存录制结果：持久化后更新 App 内快捷键缓存；全局快捷键额外重新注册。
   const handleSaveShortcut = React.useCallback(
     async (shortcutId: string, accelerator: string): Promise<boolean> => {
@@ -411,6 +427,9 @@ export function ShortcutSettings(): React.ReactElement {
             })
             return true
           }
+        } else {
+          // 应用级快捷键通过主进程 globalShortcut（focus/blur 生命周期）注册
+          await reregisterAppShortcutsIfNeeded(shortcutId)
         }
 
         toast.success('快捷键已保存', { id: 'shortcut-save-success' })
@@ -421,7 +440,7 @@ export function ShortcutSettings(): React.ReactElement {
         return false
       }
     },
-    [overrides, reregisterGlobalShortcut, setOverrides],
+    [overrides, reregisterGlobalShortcut, reregisterAppShortcutsIfNeeded, setOverrides],
   )
 
   // 恢复单个快捷键默认值
@@ -453,6 +472,8 @@ export function ShortcutSettings(): React.ReactElement {
             })
             return
           }
+        } else {
+          await reregisterAppShortcutsIfNeeded(shortcutId)
         }
 
         toast.success('已恢复默认快捷键', { id: 'shortcut-save-success' })
@@ -461,7 +482,7 @@ export function ShortcutSettings(): React.ReactElement {
         toast.error('恢复默认快捷键失败', { id: 'shortcut-save-error' })
       }
     },
-    [overrides, reregisterGlobalShortcut, setOverrides],
+    [overrides, reregisterGlobalShortcut, reregisterAppShortcutsIfNeeded, setOverrides],
   )
 
   // 禁用单个快捷键：将当前平台 override 置为 null
@@ -494,6 +515,8 @@ export function ShortcutSettings(): React.ReactElement {
             })
             return
           }
+        } else {
+          await reregisterAppShortcutsIfNeeded(shortcutId)
         }
 
         toast.success('快捷键已禁用', { id: 'shortcut-save-success' })
@@ -502,7 +525,7 @@ export function ShortcutSettings(): React.ReactElement {
         toast.error('禁用快捷键失败', { id: 'shortcut-save-error' })
       }
     },
-    [overrides, reregisterGlobalShortcut, setOverrides],
+    [overrides, reregisterGlobalShortcut, reregisterAppShortcutsIfNeeded, setOverrides],
   )
 
   // 恢复所有默认值（同时会清除所有"已禁用"标记）
@@ -517,6 +540,8 @@ export function ShortcutSettings(): React.ReactElement {
 
       try {
         const results = await window.electronAPI.reregisterGlobalShortcuts()
+        // 同时重新注册应用级快捷键
+        await window.electronAPI.reregisterAppShortcuts()
         const hasUnregisteredGlobal = Object.values(results).some((registered) => !registered)
         if (hasUnregisteredGlobal) {
           toast.warning('已恢复全部默认；部分全局快捷键当前未注册', {
@@ -710,8 +735,8 @@ export function ShortcutSettings(): React.ReactElement {
                               <TooltipContent side="top">恢复默认快捷键</TooltipContent>
                             </Tooltip>
                           )}
-                          {/* 系统可用性指示器（仅全局快捷键显示） */}
-                          {def.global && !isDisabled && recordingId !== def.id && (
+                          {/* 系统可用性指示器（所有快捷键） */}
+                          {!isDisabled && recordingId !== def.id && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className={`inline-flex items-center justify-center size-5 rounded-full text-[10px] font-bold ${

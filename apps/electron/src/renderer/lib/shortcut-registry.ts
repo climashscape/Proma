@@ -194,13 +194,49 @@ function dispatchShortcut(e: KeyboardEvent): void {
 /**
  * 初始化快捷键注册表
  *
- * 挂载全局 keydown listener，仅执行一次
+ * 挂载全局 keydown listener，并将应用级快捷键注册到主进程（微信模式）。
+ * 主进程在窗口聚焦时通过 globalShortcut 注册应用级快捷键，失焦时注销。
  */
-export function initShortcutRegistry(): void {
+export async function initShortcutRegistry(): Promise<void> {
   if (initialized) return
   initialized = true
   rebuildCache()
   window.addEventListener('keydown', dispatchShortcut, true) // capture 阶段
+
+  // 将应用级快捷键注册到主进程
+  await syncAppShortcutsToMain()
+
+  // 监听主进程的应用级快捷键触发事件
+  window.electronAPI.onAppShortcutTrigger((id: string) => {
+    const handlerSet = handlers.get(id)
+    if (handlerSet && handlerSet.size > 0) {
+      for (const entry of handlerSet) {
+        entry.callback()
+      }
+    }
+  })
+}
+
+/**
+ * 将应用级快捷键同步到主进程
+ *
+ * 收集所有非全局、非 readonly 快捷键的当前 accelerator，
+ * 通过 IPC 发送给主进程，主进程在窗口聚焦时注册这些快捷键。
+ */
+async function syncAppShortcutsToMain(): Promise<void> {
+  const shortcuts: Array<{ id: string; accelerator: string }> = []
+  for (const def of DEFAULT_SHORTCUTS) {
+    if (def.global || def.readonly) continue
+    const accel = getActiveAccelerator(def.id)
+    if (!accel) continue
+    shortcuts.push({ id: def.id, accelerator: accel })
+  }
+
+  try {
+    await window.electronAPI.setAppShortcuts(shortcuts)
+  } catch (err) {
+    console.warn('[快捷键] 同步应用级快捷键到主进程失败:', err)
+  }
 }
 
 /**
@@ -231,11 +267,15 @@ export function registerShortcut(
 /**
  * 更新用户自定义快捷键配置
  *
- * 配置变更后自动重建匹配缓存
+ * 配置变更后自动重建匹配缓存，并同步到主进程
  */
 export function updateShortcutOverrides(overrides: ShortcutOverrides): void {
   currentOverrides = overrides
   rebuildCache()
+  // 同步应用级快捷键到主进程（非阻塞）
+  syncAppShortcutsToMain().catch((err) => {
+    console.warn('[快捷键] 同步应用级快捷键到主进程失败:', err)
+  })
 }
 
 /**

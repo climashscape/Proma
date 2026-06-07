@@ -2,21 +2,31 @@
  * 全局快捷键服务（主进程）
  *
  * 使用 Electron globalShortcut API 注册系统级快捷键。
- * 全局快捷键在应用不在前台时也能触发。
+ * - 全局快捷键：应用不在前台时也能触发（始终注册）
+ * - 应用级快捷键：仅在窗口聚焦时注册，失焦时注销（微信模式）
  *
  * 与渲染进程的 shortcut-registry 完全独立：
- * - 渲染进程：keydown listener，仅应用内生效
+ * - 渲染进程：keydown listener，仅应用内生效（fallback）
  * - 主进程：globalShortcut.register，系统级生效
  */
 
 import { app, globalShortcut } from 'electron'
 import { getSettings } from './settings-service'
 
-/** 全局快捷键 ID → 回调映射 */
+/** 快捷键 ID → 回调映射 */
 const globalCallbacks = new Map<string, () => void>()
+
+/** 应用级快捷键 ID → 回调映射 */
+const appCallbacks = new Map<string, () => void>()
 
 /** 当前注册的 accelerator → 快捷键 ID 映射（用于注销） */
 const registeredAccelerators = new Map<string, string>()
+
+/** 当前注册的应用级 accelerator → 快捷键 ID 映射 */
+const registeredAppAccelerators = new Map<string, string>()
+
+/** 应用级快捷键是否当前已注册（受 focus/blur 控制） */
+let appShortcutsRegistered = false
 
 /** 默认全局快捷键配置 */
 const GLOBAL_SHORTCUT_DEFAULTS: Record<string, { mac: string; win: string }> = {
@@ -122,8 +132,9 @@ export function checkGlobalAcceleratorAvailability(accelerator: string): boolean
     .map((part) => part.trim().toLowerCase() === 'cmd' ? 'CommandOrControl' : part)
     .join('+')
 
-  // 如果该 accelerator 已经被 Proma 自己注册了，说明可用
+  // 如果该 accelerator 已经被 Proma 自己注册了（全局或应用级），说明可用
   if (registeredAccelerators.has(normalizedAccel)) return true
+  if (registeredAppAccelerators.has(normalizedAccel)) return true
 
   try {
     const success = globalShortcut.register(normalizedAccel, () => {})
@@ -182,6 +193,144 @@ export function unregisterAllGlobalShortcuts(): void {
     globalShortcut.unregisterAll()
   }
   registeredAccelerators.clear()
+  registeredAppAccelerators.clear()
   globalCallbacks.clear()
+  appCallbacks.clear()
+  appShortcutsRegistered = false
   console.log('[全局快捷键] 已注销所有')
+}
+
+// ===== 应用级快捷键（focus/blur 生命周期） =====
+
+/** 应用级快捷键配置：ID → { accelerator, callback } */
+interface AppShortcutEntry {
+  accelerator: string
+  callback: () => void
+}
+
+/** 应用级快捷键配置表（由渲染进程通过 IPC 设置） */
+const appShortcutEntries = new Map<string, AppShortcutEntry>()
+
+/**
+ * 设置应用级快捷键
+ *
+ * 渲染进程通过 IPC 调用，将所有非全局快捷键的 accelerator 和回调注册到主进程。
+ * 回调通过 IPC 通知渲染进程执行对应快捷键动作。
+ */
+export function setAppShortcuts(
+  shortcuts: Array<{ id: string; accelerator: string }>,
+  sendCallback: (id: string) => void,
+): void {
+  appShortcutEntries.clear()
+  for (const { id, accelerator } of shortcuts) {
+    appShortcutEntries.set(id, { accelerator, callback: () => sendCallback(id) })
+  }
+
+  // 如果窗口当前聚焦，立即注册
+  if (appShortcutsRegistered) {
+    registerAppShortcutsNow()
+  }
+}
+
+/**
+ * 注册所有应用级快捷键
+ *
+ * 在主窗口获得焦点时调用。
+ */
+function registerAppShortcutsNow(): void {
+  // 先注销旧的应用级快捷键
+  unregisterAppShortcutsNow()
+
+  for (const [id, entry] of appShortcutEntries) {
+    // 跳过被用户禁用的快捷键
+    const override = getSettings().shortcutOverrides?.[id]
+    if (override) {
+      const customAccel = isMac ? override.mac : override.win
+      if (customAccel === null) continue
+    }
+
+    const accelerator = normalizeAccelerator(entry.accelerator)
+    if (!accelerator) continue
+
+    try {
+      const success = globalShortcut.register(accelerator, entry.callback)
+      if (success) {
+        registeredAppAccelerators.set(accelerator, id)
+      } else {
+        console.warn(`[应用快捷键] 注册失败（可能被占用）: ${id} → ${accelerator}`)
+      }
+    } catch (err) {
+      console.error(`[应用快捷键] 注册异常: ${id} → ${accelerator}`, err)
+    }
+  }
+  appShortcutsRegistered = true
+}
+
+/**
+ * 注销所有应用级快捷键
+ *
+ * 在主窗口失去焦点时调用。
+ */
+function unregisterAppShortcutsNow(): void {
+  for (const accelerator of registeredAppAccelerators.keys()) {
+    try {
+      globalShortcut.unregister(accelerator)
+    } catch {
+      // 忽略注销错误
+    }
+  }
+  registeredAppAccelerators.clear()
+}
+
+/**
+ * 主窗口获得焦点 — 注册应用级快捷键
+ */
+export function onWindowFocus(): void {
+  registerAppShortcutsNow()
+}
+
+/**
+ * 主窗口失去焦点 — 注销应用级快捷键
+ */
+export function onWindowBlur(): void {
+  unregisterAppShortcutsNow()
+  appShortcutsRegistered = false
+}
+
+/**
+ * 重新注册应用级快捷键
+ *
+ * 设置变更后调用。返回各快捷键注册结果。
+ */
+export function reregisterAppShortcuts(): Record<string, boolean> {
+  const results: Record<string, boolean> = {}
+
+  // 如果当前已注册，先注销再重新注册
+  if (appShortcutsRegistered) {
+    unregisterAppShortcutsNow()
+    registerAppShortcutsNow()
+  }
+
+  // 收集结果
+  for (const [id] of appShortcutEntries) {
+    const entry = appShortcutEntries.get(id)
+    if (!entry) {
+      results[id] = false
+      continue
+    }
+    const accelerator = normalizeAccelerator(entry.accelerator)
+    results[id] = registeredAppAccelerators.has(accelerator)
+  }
+
+  return results
+}
+
+/**
+ * 标准化 accelerator 字符串为 Electron 格式
+ */
+function normalizeAccelerator(accelerator: string): string {
+  return accelerator
+    .split('+')
+    .map((part) => part.trim().toLowerCase() === 'cmd' ? 'CommandOrControl' : part)
+    .join('+')
 }

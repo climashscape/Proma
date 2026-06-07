@@ -384,6 +384,17 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // 应用级快捷键 focus/blur 生命周期管理（微信模式）
+  mainWindow.on('focus', () => {
+    const { onWindowFocus } = require('./lib/global-shortcut-service') as typeof import('./lib/global-shortcut-service')
+    onWindowFocus()
+  })
+
+  mainWindow.on('blur', () => {
+    const { onWindowBlur } = require('./lib/global-shortcut-service') as typeof import('./lib/global-shortcut-service')
+    onWindowBlur()
+  })
 }
 
 function sendToMainWindow(channel: string, data?: unknown): void {

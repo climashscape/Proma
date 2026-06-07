@@ -302,6 +302,16 @@ export const GLOBAL_SHORTCUT_IPC_CHANNELS = {
   CHECK_AVAILABILITY: 'global-shortcut:check-availability',
 } as const
 
+/** 应用级快捷键 IPC 通道 */
+export const APP_SHORTCUT_IPC_CHANNELS = {
+  /** 设置应用级快捷键（渲染进程 → 主进程） */
+  SET: 'app-shortcut:set',
+  /** 重新注册应用级快捷键（设置变更后） */
+  REREGISTER: 'app-shortcut:reregister',
+  /** 应用级快捷键触发通知（主进程 → 渲染进程） */
+  TRIGGER: 'app-shortcut:trigger',
+} as const
+
 /** 语音输入 IPC 通道 */
 export const VOICE_DICTATION_IPC_CHANNELS = {
   /** 获取语音输入设置 */

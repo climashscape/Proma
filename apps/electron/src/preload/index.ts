@@ -125,7 +125,7 @@ import type {
   TrayCreateSessionData,
   TrayOpenAgentSessionData,
 } from '../types'
-import { QUICK_TASK_IPC_CHANNELS, TRAY_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS } from '../types'
+import { QUICK_TASK_IPC_CHANNELS, TRAY_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_SHORTCUT_IPC_CHANNELS } from '../types'
 
 /**
  * 暴露给渲染进程的 API 接口定义
@@ -922,6 +922,12 @@ export interface ElectronAPI {
   reregisterGlobalShortcuts: () => Promise<Record<string, boolean>>
   /** 检查全局快捷键是否可被系统注册 */
   checkGlobalShortcutAvailability: (accelerator: string) => Promise<boolean>
+  /** 设置应用级快捷键（渲染进程 → 主进程，focus 时注册） */
+  setAppShortcuts: (shortcuts: Array<{ id: string; accelerator: string }>) => Promise<void>
+  /** 重新注册应用级快捷键（设置变更后） */
+  reregisterAppShortcuts: () => Promise<Record<string, boolean>>
+  /** 订阅应用级快捷键触发事件 */
+  onAppShortcutTrigger: (callback: (id: string) => void) => () => void
   /** 订阅快速任务窗口聚焦事件 */
   onQuickTaskFocus: (callback: () => void) => () => void
   /** 订阅快速任务打开会话事件（主窗口接收，由渲染进程负责创建会话） */
@@ -2153,6 +2159,20 @@ const electronAPI: ElectronAPI = {
 
   checkGlobalShortcutAvailability: (accelerator: string) => {
     return ipcRenderer.invoke('global-shortcut:check-availability', accelerator)
+  },
+
+  setAppShortcuts: (shortcuts: Array<{ id: string; accelerator: string }>) => {
+    return ipcRenderer.invoke(APP_SHORTCUT_IPC_CHANNELS.SET, shortcuts)
+  },
+
+  reregisterAppShortcuts: () => {
+    return ipcRenderer.invoke(APP_SHORTCUT_IPC_CHANNELS.REREGISTER)
+  },
+
+  onAppShortcutTrigger: (callback: (id: string) => void) => {
+    const listener = (_: unknown, id: string): void => callback(id)
+    ipcRenderer.on(APP_SHORTCUT_IPC_CHANNELS.TRIGGER, listener)
+    return () => { ipcRenderer.removeListener(APP_SHORTCUT_IPC_CHANNELS.TRIGGER, listener) }
   },
 
   onQuickTaskFocus: (callback: () => void) => {
