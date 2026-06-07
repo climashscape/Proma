@@ -30,8 +30,8 @@ export interface TabBarItemProps {
   isLeaving: boolean
   /** 是否正在被拖拽 */
   isDragging?: boolean
-  /** 拖拽时水平偏移量 */
-  dragOffsetX?: number
+  /** 拖拽时绝对 left 位置（浏览器风格：被拖 tab 脱离 flex 流跟随鼠标） */
+  dragLeft?: number
   onActivate: () => void
   onClose: () => void
   onMiddleClick: () => void
@@ -62,7 +62,7 @@ export function TabBarItem({
   isHovered,
   isLeaving,
   isDragging,
-  dragOffsetX,
+  dragLeft,
   onActivate,
   onClose,
   onMiddleClick,
@@ -156,9 +156,9 @@ export function TabBarItem({
         isDragging ? "z-20" : "",
       )}
       style={isDragging ? {
-        transform: `translateX(${dragOffsetX ?? 0}px)`,
-        transition: 'none',
-        opacity: 0.85,
+        position: 'absolute',
+        left: dragLeft ?? 0,
+        pointerEvents: 'none',
       } : undefined}
       onMouseEnter={onHoverEnter}
       onMouseLeave={onHoverLeave}

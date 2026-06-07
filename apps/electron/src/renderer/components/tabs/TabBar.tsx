@@ -75,18 +75,17 @@ export function TabBar(): React.ReactElement {
     return ids
   }, [agentSessions])
 
-  // 拖拽状态
+  // 拖拽状态（浏览器风格：被拖 tab 绝对定位跟随鼠标，占位符在 flex 流中标记空位）
   const dragState = React.useRef<{
     dragging: boolean
     tabId: string
     startX: number
-    startIndex: number
-    offsetX: number
     pointerOffsetInTab: number
+    placeholderIndex: number
   } | null>(null)
   const [draggingTabId, setDraggingTabId] = React.useState<string | null>(null)
-  const [dragOffsetX, setDragOffsetX] = React.useState(0)
-  // 保持 tabs 的最新值供拖拽事件处理器使用
+  const [dragLeft, setDragLeft] = React.useState(0)
+  const [placeholderIndex, setPlaceholderIndex] = React.useState(-1)
   const tabsRef = React.useRef(tabs)
   tabsRef.current = tabs
 
@@ -162,92 +161,76 @@ export function TabBar(): React.ReactElement {
   }, [tabs, setTabs, setActiveTabId, store, setAgentSessions, setConversations])
 
   const handleDragStart = React.useCallback((tabId: string, e: React.PointerEvent) => {
-    if (e.button !== 0) return // 只处理左键
+    if (e.button !== 0) return
     const idx = tabs.findIndex((t) => t.id === tabId)
     if (idx === -1) return
 
-    // 记录鼠标按下时在 tab 内部的偏移量
     const tabEl = document.querySelector(`[data-tab-id="${tabId}"]`) as HTMLElement | null
     if (!tabEl) return
     const tabRect = tabEl.getBoundingClientRect()
-    const pointerOffsetInTab = e.clientX - tabRect.left
 
     dragState.current = {
       dragging: false,
       tabId,
       startX: e.clientX,
-      startIndex: idx,
-      offsetX: 0,
-      pointerOffsetInTab,
+      pointerOffsetInTab: e.clientX - tabRect.left,
+      placeholderIndex: idx,
     }
 
     const handleMove = (me: PointerEvent): void => {
       if (!dragState.current) return
       const dx = me.clientX - dragState.current.startX
-      if (!dragState.current.dragging && Math.abs(dx) > 5) {
+      if (!dragState.current.dragging && Math.abs(dx) > 4) {
         dragState.current.dragging = true
         setDraggingTabId(tabId)
+        setPlaceholderIndex(dragState.current.placeholderIndex)
       }
       if (!dragState.current.dragging) return
 
-      // 计算被拖 tab 的视觉中心位置
-      const currentTabs = tabsRef.current
-      const currentIdx = currentTabs.findIndex((t) => t.id === tabId)
-      if (currentIdx === -1) return
+      // 被拖 tab 跟随鼠标
+      const container = document.querySelector('[data-tabbar-scroll]') as HTMLElement | null
+      if (!container) return
+      const containerRect = container.getBoundingClientRect()
+      const left = me.clientX - containerRect.left - dragState.current.pointerOffsetInTab + container.scrollLeft
+      setDragLeft(left)
 
-      // 使用所有 tab 元素的当前位置计算拖拽中心
-      const allTabEls = document.querySelectorAll('[data-tab-id]')
-      const draggedEl = allTabEls[currentIdx] as HTMLElement | null
-      if (!draggedEl) return
-      const draggedRect = draggedEl.getBoundingClientRect()
-      const dragCenterX = draggedRect.left + dragState.current.pointerOffsetInTab + dx
-
-      // 确定 dragCenterX 落在哪个 tab 的范围内
-      let targetIndex = currentIdx
+      // 计算被拖 tab 视觉中心应该落在哪个 slot
+      const dragCenterX = me.clientX - containerRect.left + container.scrollLeft
+      const allTabEls = container.querySelectorAll('[data-tab-id]')
+      let newPlaceholder = dragState.current.placeholderIndex
       for (let i = 0; i < allTabEls.length; i++) {
         const el = allTabEls[i] as HTMLElement
         const rect = el.getBoundingClientRect()
-        if (dragCenterX < rect.left + rect.width / 2) {
-          targetIndex = i
+        const center = rect.left + rect.width / 2 - containerRect.left + container.scrollLeft
+        if (dragCenterX < center) {
+          newPlaceholder = i
           break
         }
-        targetIndex = i
+        newPlaceholder = i
       }
 
-      // 更新 transform 偏移量
-      dragState.current.offsetX = dx
-      setDragOffsetX(dx)
-
-      // 实时交换
-      if (targetIndex !== currentIdx) {
-        const reordered = reorderTabs(currentTabs, currentIdx, targetIndex)
-        if (reordered !== currentTabs) {
-          // 记录交换前被拖 tab 的视觉位置
-          const visualLeftBefore = draggedRect.left + dx
-          setTabs(reordered)
-          // 交换后 React 会重渲染，tab 在 DOM 中的位置变了
-          // 需要修正 offset 使 tab 视觉位置不变
-          // 在 requestAnimationFrame 中（React 已渲染）读取新 DOM 位置并修正
-          requestAnimationFrame(() => {
-            const newEl = document.querySelector(`[data-tab-id="${tabId}"]`) as HTMLElement | null
-            if (newEl && dragState.current) {
-              const newRect = newEl.getBoundingClientRect()
-              const newDx = visualLeftBefore - newRect.left
-              dragState.current.startX = me.clientX - newDx
-              dragState.current.offsetX = newDx
-              setDragOffsetX(newDx)
-            }
-          })
-        }
+      if (newPlaceholder !== dragState.current.placeholderIndex) {
+        dragState.current.placeholderIndex = newPlaceholder
+        setPlaceholderIndex(newPlaceholder)
       }
     }
 
     const handleUp = (): void => {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
+      if (dragState.current?.dragging) {
+        // 把被拖 tab 移到 placeholderIndex 位置
+        const currentTabs = tabsRef.current
+        const fromIdx = currentTabs.findIndex((t) => t.id === tabId)
+        const toIdx = dragState.current.placeholderIndex
+        if (fromIdx !== -1 && toIdx !== fromIdx) {
+          const reordered = reorderTabs(currentTabs, fromIdx, toIdx)
+          if (reordered !== currentTabs) setTabs(reordered)
+        }
+      }
       dragState.current = null
       setDraggingTabId(null)
-      setDragOffsetX(0)
+      setPlaceholderIndex(-1)
     }
 
     document.addEventListener('pointermove', handleMove)
@@ -265,7 +248,8 @@ export function TabBar(): React.ReactElement {
         workspaceNameBySessionId={workspaceNameBySessionId}
         automationSessionIds={automationSessionIds}
         draggingTabId={draggingTabId}
-        dragOffsetX={dragOffsetX}
+        dragLeft={dragLeft}
+        placeholderIndex={placeholderIndex}
         onActivate={handleActivate}
         onClose={requestClose}
         onDragStart={handleDragStart}
@@ -283,7 +267,8 @@ function TabBarInner({
   workspaceNameBySessionId,
   automationSessionIds,
   draggingTabId,
-  dragOffsetX,
+  dragLeft,
+  placeholderIndex,
   onActivate,
   onClose,
   onDragStart,
@@ -295,7 +280,8 @@ function TabBarInner({
   workspaceNameBySessionId: Map<string, string>
   automationSessionIds: Set<string>
   draggingTabId: string | null
-  dragOffsetX: number
+  dragLeft: number
+  placeholderIndex: number
   onActivate: (tabId: string) => void
   onClose: (tabId: string) => void
   onDragStart: (tabId: string, e: React.PointerEvent) => void
@@ -411,10 +397,9 @@ function TabBarInner({
   }, [])
 
   return (
-    <div className={cn("flex items-end h-[34px] tabbar-bg relative", isWindows && "pr-[126px]")}>
+    <div className="flex items-end h-[34px] tabbar-bg relative">
       {/* 顶部 TabBar 的空白区域必须保持可拖拽，尤其是 macOS/Windows 自定义标题栏。
-          Windows 上外层 pr-[126px] 让 TabBar 背景（tabbar-bg）不延伸到 WindowControls 区域，
-          同时拖拽层也用 right-[126px] 避开按钮区，防止 hitmask 重叠。
+          Windows 上背景拖拽层避开右上角 WindowControls 区域（126px），防止 hitmask 重叠。
           需要交互的单个 Tab 会在 TabBarItem 内部自己声明 titlebar-no-drag。 */}
       <div className={cn("absolute inset-0 titlebar-drag-region", isWindows && "right-[126px]")} />
 
@@ -432,38 +417,56 @@ function TabBarInner({
 
       <div
         ref={scrollRef}
-        className={cn("relative flex items-end flex-1 min-w-0 overflow-x-auto scrollbar-none", canScrollLeft && "pl-5", canScrollRight && "pr-5")}
+        data-tabbar-scroll
+        className={cn("relative flex items-end flex-1 min-w-0 overflow-x-auto scrollbar-none", canScrollLeft && "pl-5", canScrollRight && "pr-5", isWindows && "pr-[126px]")}
       >
-        {tabs.map((tab) => (
-          <TabBarItem
-            key={tab.id}
-            id={tab.id}
-            type={tab.type}
-            title={tab.title}
-            workspaceName={
-              tab.type === 'agent' ? workspaceNameBySessionId.get(tab.sessionId)
-              : tab.type === 'chat' && tab.pinned ? 'Chat'
-              : undefined
-            }
-            isAutomation={tab.type === 'agent' && automationSessionIds.has(tab.sessionId)}
-            isPinned={!!tab.pinned}
-            isActive={tab.id === activeTabId}
-            isStreaming={streamingMap.get(tab.id) ?? 'idle'}
-            isHovered={hoveredTabId === tab.id}
-            isLeaving={hoveredTabId === tab.id && isLeaving}
-            isDragging={draggingTabId === tab.id}
-            dragOffsetX={draggingTabId === tab.id ? dragOffsetX : 0}
-            onActivate={() => onActivate(tab.id)}
-            onClose={() => onClose(tab.id)}
-            onMiddleClick={() => onClose(tab.id)}
-            onDragStart={(e) => onDragStart(tab.id, e)}
-            onUnpin={onUnpin ? () => onUnpin(tab.id) : undefined}
-            onHoverEnter={() => handleTabHoverEnter(tab.id)}
-            onHoverLeave={handleTabHoverLeave}
-            onPanelHoverEnter={handlePanelHoverEnter}
-            onPanelHoverLeave={handleTabHoverLeave}
-          />
-        ))}
+        {tabs.map((tab) => {
+          const isDragged = draggingTabId === tab.id
+          return (
+            <React.Fragment key={tab.id}>
+              {/* 被拖 tab 脱离 flex 流时，占位符保持原宽度 */}
+              {isDragged && (
+                <div
+                  className="flex-shrink-0 h-[34px]"
+                  ref={(el) => {
+                    if (el) {
+                      const draggedEl = document.querySelector(`[data-tab-id="${tab.id}"]`) as HTMLElement | null
+                      if (draggedEl) el.style.width = `${draggedEl.offsetWidth}px`
+                    }
+                  }}
+                />
+              )}
+              <TabBarItem
+              key={tab.id}
+              id={tab.id}
+              type={tab.type}
+              title={tab.title}
+              workspaceName={
+                tab.type === 'agent' ? workspaceNameBySessionId.get(tab.sessionId)
+                : tab.type === 'chat' && tab.pinned ? 'Chat'
+                : undefined
+              }
+              isAutomation={tab.type === 'agent' && automationSessionIds.has(tab.sessionId)}
+              isPinned={!!tab.pinned}
+              isActive={tab.id === activeTabId}
+              isStreaming={streamingMap.get(tab.id) ?? 'idle'}
+              isHovered={isDragged ? false : hoveredTabId === tab.id}
+              isLeaving={isDragged ? false : hoveredTabId === tab.id && isLeaving}
+              isDragging={isDragged}
+              dragLeft={isDragged ? dragLeft : undefined}
+              onActivate={isDragged ? () => {} : () => onActivate(tab.id)}
+              onClose={isDragged ? () => {} : () => onClose(tab.id)}
+              onMiddleClick={isDragged ? () => {} : () => onClose(tab.id)}
+              onDragStart={isDragged ? () => {} : (e) => onDragStart(tab.id, e)}
+              onUnpin={isDragged ? undefined : onUnpin ? () => onUnpin(tab.id) : undefined}
+              onHoverEnter={isDragged ? () => {} : () => handleTabHoverEnter(tab.id)}
+              onHoverLeave={isDragged ? () => {} : handleTabHoverLeave}
+              onPanelHoverEnter={isDragged ? () => {} : handlePanelHoverEnter}
+              onPanelHoverLeave={isDragged ? () => {} : handleTabHoverLeave}
+            />
+            </React.Fragment>
+          )
+        })}
       </div>
 
       {/* 右侧滚动指示器 */}
