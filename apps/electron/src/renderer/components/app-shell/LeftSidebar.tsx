@@ -72,6 +72,7 @@ import {
   updateTabTitle,
   sessionViewStateMapAtom,
   SCRATCH_PAD_ID,
+  CHAT_WORKSPACE_ID,
   createScratchPadTab,
   type TabItem,
 } from '@/atoms/tab-atoms'
@@ -534,7 +535,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     [conversations, viewMode, draftSessionIds]
   )
 
-  /** 置顶 Agent 会话列表（仅活跃模式显示，按当前项目过滤，排除 draft） */
+  /** 置顶 Agent 会话列表（仅活跃模式显示，显示所有工作区，排除 draft） */
   const pinnedAgentSessions = React.useMemo(
     () => {
       if (viewMode !== 'active') return []
@@ -542,11 +543,10 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         s.pinned
         && !s.archived
         && !draftSessionIds.has(s.id)
-        && s.workspaceId === currentWorkspaceId
       )
       return sortAgentSessionsByUpdatedAtDesc(filtered)
     },
-    [agentSessions, viewMode, draftSessionIds, currentWorkspaceId]
+    [agentSessions, viewMode, draftSessionIds]
   )
 
   /** 当前项目的非置顶 Agent 会话（根据 viewMode 过滤归档状态，排除 draft） */
@@ -693,7 +693,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
   }, [setConversations, setTabs])
 
-  /** 切换对话置顶状态（同步标签页常驻） */
+  /** 切换对话置顶状态（同步标签页常驻，Chat 同时只允许一个置顶标签） */
   const handleTogglePin = React.useCallback(async (id: string): Promise<void> => {
     try {
       const original = store.get(conversationsAtom).find((c) => c.id === id)
@@ -704,18 +704,60 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
       if (updated.pinned) {
         // 置顶时：创建或标记置顶标签，确保顺序 [scratch, ...pinned, ...nonPinned]
+        // Chat 单置顶约束：已有 Chat 置顶标签时先自动取消旧置顶
+        let oldChatPinnedSessionId: string | null = null
         setTabs((prev) => {
           const scratchTab = prev.find((t) => t.id === SCRATCH_PAD_ID) ?? createScratchPadTab()
-          const existing = prev.find((t) => t.sessionId === id && t.type === 'chat')
+          // 检查是否已有 Chat 置顶标签
+          const existingChatPinned = prev.find((t) => t.pinned && t.type === 'chat' && t.sessionId !== id)
+          if (existingChatPinned) {
+            oldChatPinnedSessionId = existingChatPinned.sessionId
+          }
+          // 移除旧 Chat 置顶标签
+          let tabsWithoutOldPinned = existingChatPinned
+            ? prev.filter((t) => t.id !== existingChatPinned.id)
+            : prev
+          const existing = tabsWithoutOldPinned.find((t) => t.sessionId === id && t.type === 'chat')
           const updatedTabs = existing
-            ? prev.map((t) => t.id === existing.id ? { ...t, pinned: true } : t)
-            : [...prev, { id: id, type: 'chat' as const, sessionId: id, title: updated.title, pinned: true }]
+            ? tabsWithoutOldPinned.map((t) => t.id === existing.id ? { ...t, pinned: true, workspaceId: CHAT_WORKSPACE_ID } : t)
+            : [...tabsWithoutOldPinned, { id: id, type: 'chat' as const, sessionId: id, title: updated.title, pinned: true, workspaceId: CHAT_WORKSPACE_ID }]
           const pinnedTabs = updatedTabs.filter((t) => t.pinned && t.id !== SCRATCH_PAD_ID)
           const nonPinnedTabs = updatedTabs.filter((t) => !t.pinned && t.id !== SCRATCH_PAD_ID && t.type !== 'preview')
           return [scratchTab, ...pinnedTabs, ...nonPinnedTabs]
         })
+        // 同步取消旧 Chat 置顶的后端状态（失败时回滚前端标签）
+        if (oldChatPinnedSessionId) {
+          window.electronAPI.togglePinConversation(oldChatPinnedSessionId).then((oldUpdated) => {
+            setConversations((prev) => prev.map((c) => (c.id === oldUpdated.id ? oldUpdated : c)))
+          }).catch((err) => {
+            console.error('[侧边栏] 取消旧 Chat 置顶失败，回滚前端标签:', err)
+            const rollbackId = oldChatPinnedSessionId
+            if (!rollbackId) return
+            // 回滚：将旧置顶标签重新添加回 tabs
+            setTabs((prev) => {
+              const scratchTab = prev.find((t) => t.id === SCRATCH_PAD_ID) ?? createScratchPadTab()
+              const oldConversation = store.get(conversationsAtom).find((c) => c.id === rollbackId)
+              const restoredTab: TabItem = {
+                id: rollbackId,
+                type: 'chat',
+                sessionId: rollbackId,
+                title: oldConversation?.title ?? '对话',
+                pinned: true,
+                workspaceId: CHAT_WORKSPACE_ID,
+              }
+              const pinnedTabs = prev.filter((t) => t.pinned && t.id !== SCRATCH_PAD_ID)
+              const hasRestored = pinnedTabs.some((t) => t.id === rollbackId)
+              const allPinned = hasRestored ? pinnedTabs : [...pinnedTabs, restoredTab]
+              const nonPinnedTabs = prev.filter((t) => !t.pinned && t.id !== SCRATCH_PAD_ID && t.type !== 'preview')
+              return [scratchTab, ...allPinned, ...nonPinnedTabs]
+            })
+            toast.error('替换置顶失败', { description: '旧置顶状态未同步，请重试' })
+          })
+        }
         if (original?.archived && !updated.archived) {
-          toast.success('已置顶', { description: '已自动取消归档' })
+          toast.success('已置顶', { description: oldChatPinnedSessionId ? '已替换之前的置顶' : '已自动取消归档' })
+        } else if (oldChatPinnedSessionId) {
+          toast.success('已置顶', { description: '已替换之前的置顶' })
         } else {
           toast.success('已置顶')
         }
@@ -944,27 +986,72 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
   }, [setAgentSessions, setTabs])
 
-  /** 切换 Agent 会话置顶状态（同步标签页常驻） */
+  /** 切换 Agent 会话置顶状态（同步标签页常驻，每工作区只允许一个置顶标签） */
   const handleTogglePinAgent = React.useCallback(async (id: string): Promise<void> => {
     try {
       const original = store.get(agentSessionsAtom).find((s) => s.id === id)
       const updated = await window.electronAPI.togglePinAgentSession(id)
       setAgentSessions((prev) => replaceAgentSessionInFreshnessOrder(prev, updated))
+      const workspaceId = updated.workspaceId
 
       if (updated.pinned) {
         // 置顶时：创建或标记置顶标签，确保顺序 [scratch, ...pinned, ...nonPinned]
+        // 每工作区单置顶约束：同工作区已有置顶标签时先自动取消旧置顶
+        let oldPinnedSessionId: string | null = null
         setTabs((prev) => {
           const scratchTab = prev.find((t) => t.id === SCRATCH_PAD_ID) ?? createScratchPadTab()
-          const existing = prev.find((t) => t.sessionId === id && t.type === 'agent')
+          // 检查是否已有同工作区的置顶标签（workspaceId 为空时跳过约束，无法确定工作区归属）
+          const existingWorkspacePinned = workspaceId
+            ? prev.find((t) => t.pinned && t.type === 'agent' && t.workspaceId === workspaceId && t.sessionId !== id)
+            : undefined
+          if (existingWorkspacePinned) {
+            oldPinnedSessionId = existingWorkspacePinned.sessionId
+          }
+          // 移除旧置顶标签
+          let tabsWithoutOldPinned = existingWorkspacePinned
+            ? prev.filter((t) => t.id !== existingWorkspacePinned.id)
+            : prev
+          const existing = tabsWithoutOldPinned.find((t) => t.sessionId === id && t.type === 'agent')
           const updatedTabs = existing
-            ? prev.map((t) => t.id === existing.id ? { ...t, pinned: true } : t)
-            : [...prev, { id: id, type: 'agent' as const, sessionId: id, title: updated.title, pinned: true }]
+            ? tabsWithoutOldPinned.map((t) => t.id === existing.id ? { ...t, pinned: true, workspaceId } : t)
+            : [...tabsWithoutOldPinned, { id: id, type: 'agent' as const, sessionId: id, title: updated.title, pinned: true, workspaceId }]
           const pinnedTabs = updatedTabs.filter((t) => t.pinned && t.id !== SCRATCH_PAD_ID)
           const nonPinnedTabs = updatedTabs.filter((t) => !t.pinned && t.id !== SCRATCH_PAD_ID && t.type !== 'preview')
           return [scratchTab, ...pinnedTabs, ...nonPinnedTabs]
         })
+        // 同步取消旧置顶的后端状态（失败时回滚前端标签）
+        if (oldPinnedSessionId) {
+          window.electronAPI.togglePinAgentSession(oldPinnedSessionId).then((oldUpdated) => {
+            setAgentSessions((prev) => prev.map((s) => (s.id === oldUpdated.id ? oldUpdated : s)))
+          }).catch((err) => {
+            console.error('[侧边栏] 取消旧置顶失败，回滚前端标签:', err)
+            const rollbackId = oldPinnedSessionId
+            if (!rollbackId) return
+            // 回滚：将旧置顶标签重新添加回 tabs
+            setTabs((prev) => {
+              const scratchTab = prev.find((t) => t.id === SCRATCH_PAD_ID) ?? createScratchPadTab()
+              const oldSession = store.get(agentSessionsAtom).find((s) => s.id === rollbackId)
+              const restoredTab: TabItem = {
+                id: rollbackId,
+                type: 'agent',
+                sessionId: rollbackId,
+                title: oldSession?.title ?? 'Agent 会话',
+                pinned: true,
+                workspaceId: oldSession?.workspaceId,
+              }
+              const pinnedTabs = prev.filter((t) => t.pinned && t.id !== SCRATCH_PAD_ID)
+              const hasRestored = pinnedTabs.some((t) => t.id === rollbackId)
+              const allPinned = hasRestored ? pinnedTabs : [...pinnedTabs, restoredTab]
+              const nonPinnedTabs = prev.filter((t) => !t.pinned && t.id !== SCRATCH_PAD_ID && t.type !== 'preview')
+              return [scratchTab, ...allPinned, ...nonPinnedTabs]
+            })
+            toast.error('替换置顶失败', { description: '旧置顶状态未同步，请重试' })
+          })
+        }
         if (original?.archived && !updated.archived) {
-          toast.success('已置顶', { description: '已自动取消归档' })
+          toast.success('已置顶', { description: oldPinnedSessionId ? '已替换之前的置顶' : '已自动取消归档' })
+        } else if (oldPinnedSessionId) {
+          toast.success('已置顶', { description: '已替换之前的置顶' })
         } else {
           toast.success('已置顶')
         }
@@ -1035,10 +1122,44 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     setAgentSessions((prev) => replaceAgentSessionInFreshnessOrder(prev, updatedSession))
     // 如果迁移的是当前选中的会话，取消选中并关闭标签页
     if (currentAgentSessionId === updatedSession.id) {
-      const tabResult = closeTab(tabs, activeTabId, updatedSession.id)
+      // 置顶标签不可关闭，先取消置顶标记再关闭
+      setTabs((prev) => {
+        const tab = prev.find((t) => t.sessionId === updatedSession.id && t.pinned)
+        if (tab) return prev.map((t) => t.id === tab.id ? { ...t, pinned: false } : t)
+        return prev
+      })
+      const currentTabs = store.get(tabsAtom)
+      const currentActiveTabId = store.get(activeTabIdAtom)
+      const tabResult = closeTab(currentTabs, currentActiveTabId, updatedSession.id)
       setTabs(tabResult.tabs)
       setActiveTabId(tabResult.activeTabId)
       setCurrentAgentSessionId(null)
+    } else {
+      // 非当前会话：如果是置顶标签，更新 workspaceId（会话已迁移到新工作区）
+      // 同时检查目标工作区是否已有置顶标签，如有则取消旧置顶以保持单约束
+      let oldPinnedSessionId: string | null = null
+      setTabs((prev) => {
+        const tab = prev.find((t) => t.sessionId === updatedSession.id && t.pinned)
+        if (!tab || tab.workspaceId === updatedSession.workspaceId) return prev
+        // 检查目标工作区是否已有置顶标签
+        const existingPinned = updatedSession.workspaceId
+          ? prev.find((t) => t.pinned && t.type === 'agent' && t.workspaceId === updatedSession.workspaceId && t.id !== tab.id)
+          : undefined
+        if (existingPinned) {
+          oldPinnedSessionId = existingPinned.sessionId
+          // 取消旧置顶标签，更新迁移标签的 workspaceId
+          return prev
+            .map((t) => t.id === existingPinned.id ? { ...t, pinned: false } : t)
+            .map((t) => t.id === tab.id ? { ...t, workspaceId: updatedSession.workspaceId } : t)
+        }
+        return prev.map((t) => t.id === tab.id ? { ...t, workspaceId: updatedSession.workspaceId } : t)
+      })
+      // 同步取消旧置顶的后端状态
+      if (oldPinnedSessionId) {
+        window.electronAPI.togglePinAgentSession(oldPinnedSessionId).then((oldUpdated) => {
+          setAgentSessions((prev) => prev.map((s) => (s.id === oldUpdated.id ? oldUpdated : s)))
+        }).catch(console.error)
+      }
     }
     setMoveTargetId(null)
     toast.success('会话已迁移', {
@@ -1551,6 +1672,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                     indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
                     showPinIcon={false}
                     leftAccent={getSessionLeftAccent(agentIndicatorMap.get(session.id) ?? 'idle')}
+                    workspaceName={workspaces.find((w) => w.id === session.workspaceId)?.name}
                     relativeTimeNow={relativeTimeNow}
                     onSelect={handleSelectAgentSession}
                     onRequestDelete={handleRequestDelete}

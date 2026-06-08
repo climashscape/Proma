@@ -15,6 +15,7 @@ import {
   activeTabIdAtom,
   tabIndicatorMapAtom,
   SCRATCH_PAD_ID,
+  CHAT_WORKSPACE_ID,
   reorderTabs,
 } from '@/atoms/tab-atoms'
 import type { TabItem } from '@/atoms/tab-atoms'
@@ -442,8 +443,8 @@ function TabBarInner({
               type={tab.type}
               title={tab.title}
               workspaceName={
-                tab.type === 'agent' ? workspaceNameBySessionId.get(tab.sessionId)
-                : tab.type === 'chat' && tab.pinned ? 'Chat'
+                tab.workspaceId === CHAT_WORKSPACE_ID ? 'Chat'
+                : tab.workspaceId ? workspaceNameBySessionId.get(tab.sessionId)
                 : undefined
               }
               isAutomation={tab.type === 'agent' && automationSessionIds.has(tab.sessionId)}

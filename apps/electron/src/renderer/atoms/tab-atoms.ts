@@ -27,6 +27,9 @@ export type TabType = 'chat' | 'agent' | 'scratch' | 'preview'
 /** Scratch Pad 专用的固定 sessionId */
 export const SCRATCH_PAD_ID = '__scratch-pad__'
 
+/** Chat 置顶标签的 workspaceId 标识（Chat 无工作区概念，用此常量统一处理单置顶约束） */
+export const CHAT_WORKSPACE_ID = '__chat__'
+
 /** 会话预览 Tab 的 ID 前缀：运行时临时入口，不参与持久化 */
 const PREVIEW_TAB_PREFIX = '__preview__:'
 
@@ -45,6 +48,8 @@ export interface TabItem {
   title: string
   /** 置顶标签：常驻显示，不可手动关闭，只能取消置顶移除 */
   pinned?: boolean
+  /** 置顶标签所属工作区 ID（agent 类型），或 '__chat__'（chat 类型）。用于每工作区单置顶约束 */
+  workspaceId?: string
 }
 
 /** Tab 持久化数据（保存到 settings.json） */

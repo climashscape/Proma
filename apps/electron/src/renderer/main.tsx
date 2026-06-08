@@ -51,7 +51,7 @@ import {
 } from './atoms/markdown-font-size'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
-import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, getPersistableTabState, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
+import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, getPersistableTabState, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID, CHAT_WORKSPACE_ID } from './atoms/tab-atoms'
 import type { TabItem } from './atoms/tab-atoms'
 import { chatToolsAtom } from './atoms/chat-tool-atoms'
 import { feishuBotStatesAtom } from './atoms/feishu-atoms'
@@ -640,6 +640,11 @@ function TabStatePersistenceInitializer(): null {
         ...agentSessions.map((s) => s.id),
       ])
 
+      // 构建 sessionId → workspaceId 映射（用于旧标签补充 workspaceId）
+      const agentSessionWorkspaceMap = new Map(
+        agentSessions.map((s) => [s.id, s.workspaceId]),
+      )
+
       // 过滤 diff 类型 Tab（不持久化），同时过滤掉已被删除的会话
       const validTabs = tabState.tabs.filter(
         (t): t is TabItem =>
@@ -651,7 +656,15 @@ function TabStatePersistenceInitializer(): null {
           'title' in t &&
           (t.type === 'chat' || t.type === 'agent') &&
           validSessionIds.has(t.sessionId),
-      )
+      // 补充 workspaceId：标签如果缺少 workspaceId，从 session 数据回填
+      ).map((t) => {
+        if (!t.workspaceId) {
+          if (t.type === 'chat') return { ...t, workspaceId: CHAT_WORKSPACE_ID }
+          const wsId = agentSessionWorkspaceMap.get(t.sessionId)
+          if (wsId) return { ...t, workspaceId: wsId }
+        }
+        return t
+      })
       if (validTabs.length === 0) {
         restoredRef.current = true
         return

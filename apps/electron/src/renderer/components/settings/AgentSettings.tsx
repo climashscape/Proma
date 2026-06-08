@@ -33,6 +33,7 @@ import {
 import { useProjectActions } from '@/hooks/useProjectActions'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
 import { appModeAtom } from '@/atoms/app-mode'
+import { workspaceListModeAtom } from '@/atoms/sidebar-atoms'
 import { chatToolsAtom } from '@/atoms/chat-tool-atoms'
 import type { McpServerEntry, SkillMeta, OtherWorkspaceSkillsGroup, WorkspaceMcpConfig } from '@proma/shared'
 import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
@@ -196,6 +197,7 @@ export function AgentSettings(): React.ReactElement {
 
   // Tab & view state
   const [activeTab, setActiveTab] = useAtom(agentSettingsTabAtom)
+  const [workspaceListMode, setWorkspaceListMode] = useAtom(workspaceListModeAtom)
   const [viewMode, setViewMode] = React.useState<ViewMode>('list')
   const [editingServer, setEditingServer] = React.useState<EditingServer | null>(null)
 
@@ -483,7 +485,7 @@ ${skillList}
             )}
           />
           {[
-            { value: 'workspaces', label: '项目排序' },
+            { value: 'workspaces', label: '项目' },
             { value: 'skills', label: 'Skills' },
             { value: 'mcp', label: 'MCP' },
             { value: 'tools', label: '内置工具' },
@@ -503,10 +505,49 @@ ${skillList}
           ))}
         </div>
 
-        {/* ===== 项目排序 Tab ===== */}
+        {/* ===== 项目 Tab ===== */}
         <TabsContent value="workspaces" className="mt-4 space-y-4">
-          <SettingsSection title="项目排序" description="拖拽调整项目在侧边栏下拉选择器中的显示顺序">
+          <SettingsSection
+            title="项目"
+            description={workspaceListMode === 'dropdown' ? '下拉选择器模式：项目切换压缩为一行按钮，释放侧边栏空间' : '垂直列表模式：项目并排展示，支持内联重命名和拖拽排序'}
+          >
             <SettingsCard>
+              {/* 形态切换开关 */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+                <div className="space-y-0.5">
+                  <div className="text-sm font-medium">侧边栏展示方式</div>
+                  <div className="text-xs text-muted-foreground">
+                    {workspaceListMode === 'dropdown' ? '当前：下拉选择器' : '当前：垂直列表'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceListMode('dropdown')}
+                    className={cn(
+                      'px-3 py-1 text-xs rounded-md transition-colors',
+                      workspaceListMode === 'dropdown'
+                        ? 'bg-background text-foreground shadow-sm font-medium'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    下拉选择器
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceListMode('list')}
+                    className={cn(
+                      'px-3 py-1 text-xs rounded-md transition-colors',
+                      workspaceListMode === 'list'
+                        ? 'bg-background text-foreground shadow-sm font-medium'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    垂直列表
+                  </button>
+                </div>
+              </div>
+              {/* 项目排序列表（两种形态共用） */}
               {workspaces.map((ws) => (
                 <div key={ws.id} className="relative">
                   {dropIndicator?.id === ws.id && dropIndicator.position === 'before' && (
