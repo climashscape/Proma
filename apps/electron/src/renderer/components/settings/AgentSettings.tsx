@@ -52,6 +52,11 @@ interface SkillGroup {
   isBuiltin?: boolean
 }
 
+interface SkillGroupBucket {
+  skills: SkillMeta[]
+  explicit: boolean
+}
+
 // ===== Helpers =====
 
 function groupSkillsByPrefix(skills: SkillMeta[], defaultSlugs: Set<string>): SkillGroup[] {
@@ -66,25 +71,27 @@ function groupSkillsByPrefix(skills: SkillMeta[], defaultSlugs: Set<string>): Sk
     }
   }
 
-  const prefixMap = new Map<string, SkillMeta[]>()
+  const prefixMap = new Map<string, SkillGroupBucket>()
 
   for (const skill of otherSkills) {
+    const explicitGroup = skill.group?.trim()
     const dashIdx = skill.slug.indexOf('-')
-    const prefix = dashIdx > 0 ? skill.slug.slice(0, dashIdx) : ''
+    const prefix = explicitGroup || (dashIdx > 0 ? skill.slug.slice(0, dashIdx) : '')
     const key = prefix || skill.slug
-    const list = prefixMap.get(key) ?? []
-    list.push(skill)
-    prefixMap.set(key, list)
+    const bucket = prefixMap.get(key) ?? { skills: [], explicit: false }
+    bucket.skills.push(skill)
+    bucket.explicit = bucket.explicit || Boolean(explicitGroup)
+    prefixMap.set(key, bucket)
   }
 
   const groups: SkillGroup[] = []
   const standalone: SkillMeta[] = []
 
-  for (const [prefix, list] of prefixMap) {
-    if (list.length >= 2) {
-      groups.push({ prefix, skills: list })
+  for (const [prefix, bucket] of prefixMap) {
+    if (bucket.explicit || bucket.skills.length >= 2) {
+      groups.push({ prefix, skills: bucket.skills })
     } else {
-      standalone.push(...list)
+      standalone.push(...bucket.skills)
     }
   }
 
