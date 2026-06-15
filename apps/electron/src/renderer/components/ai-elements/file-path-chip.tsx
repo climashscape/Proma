@@ -198,7 +198,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
+      <ContextMenuTrigger>
         <button
           ref={chipRef}
           type="button"
