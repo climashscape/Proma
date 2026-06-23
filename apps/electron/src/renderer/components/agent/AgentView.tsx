@@ -1310,9 +1310,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         return map
       })
 
-      // 2. 清空输入框
-      setInputContent('')
-      setInputHtmlContent('')
+      // 2. 清空输入框（仅当发送的是用户自己输入的内容，而非推荐建议时）
+      if (!overrideText) {
+        setInputContent('')
+        setInputHtmlContent('')
+      }
       setPromptSuggestions((prev) => {
         if (!prev.has(sessionId)) return prev
         const map = new Map(prev)
@@ -1559,8 +1561,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       })(),
     }
 
-    setInputContent('')
-    setInputHtmlContent('')
+    // 清空输入框（仅当发送的是用户自己输入的内容，而非推荐建议时）
+    if (!overrideText) {
+      setInputContent('')
+      setInputHtmlContent('')
+    }
 
     window.electronAPI.sendAgentMessage(input).catch((error) => {
       console.error('[AgentView] 发送消息失败:', error)
