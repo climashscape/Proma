@@ -844,7 +844,32 @@ export function applyAgentEvent(
       // 提示建议由全局监听器处理，不影响流式状态
       return prev
 
+    case 'exit_plan_mode_request':
+      // ExitPlanMode 请求由全局监听器处理，不影响流式状态
+      return prev
+
+    case 'exit_plan_mode_resolved':
+      // ExitPlanMode 解决由全局监听器处理，不影响流式状态
+      return prev
+
+    case 'enter_plan_mode':
+      // 进入计划模式由全局监听器处理，不影响流式状态
+      return prev
+
+    case 'plan_mode_changed':
+      // 计划模式变更由全局监听器处理，不影响流式状态
+      return prev
+
+    case 'permission_mode_changed':
+      // 权限模式变更由全局监听器处理，不影响流式状态
+      return prev
+
     default:
+      if (import.meta.env.DEV) {
+        console.warn(
+          `[applyAgentEvent] 未处理的 AgentEvent 类型: ${(event as { type: string }).type}`,
+        )
+      }
       return prev
   }
 }
