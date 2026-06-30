@@ -18,3 +18,15 @@ export const projectListHeightAtom = atomWithStorage<number>(
   'proma-workspace-list-height',
   120,
 )
+
+/** 自动任务区折叠状态（持久化到 localStorage） */
+export const automationCollapsedAtom = atomWithStorage<boolean>(
+  'proma-automation-collapsed',
+  false,
+)
+
+/** 各项目折叠状态（持久化到 localStorage），key = workspaceId */
+export const projectCollapsedMapAtom = atomWithStorage<Record<string, boolean>>(
+  'proma-project-collapsed-map',
+  {},
+)
