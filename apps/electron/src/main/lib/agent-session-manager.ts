@@ -8,7 +8,7 @@
  * 照搬 conversation-manager.ts 的模式。
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, rmSync, renameSync, readdirSync, createReadStream, createWriteStream, type WriteStream } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, rmSync, readdirSync, createReadStream, createWriteStream, type WriteStream, type RmOptions, cpSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { randomUUID } from 'node:crypto'
@@ -43,6 +43,10 @@ import { convertLegacyMessage } from '@proma/session-core'
 import { clearNanoBananaAgentHistory } from './chat-tools/nano-banana-mcp'
 import { assertEnabledModelForChannel } from './agent-model-selection'
 import { copyForkWorkspaceFiles } from './agent-fork-workspace-copy'
+
+// Windows 上 fs.watch 递归监听持有的句柄释放是毫秒级延迟，
+// rmSync 可能抛 EBUSY/EPERM/ENOTEMPTY，这些错误可重试。
+const RETRYABLE_FS_CODES = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY'])
 
 /**
  * 会话索引文件格式
@@ -437,6 +441,49 @@ export function deleteAgentSession(id: string): void {
 }
 
 /**
+ * 在 Windows 上删除被 fs.watch 递归监听的目录时，可能因句柄尚未释放而抛出
+ * EBUSY / EPERM / ENOTEMPTY。带退避重试以等待 watcher 释放句柄。
+ *
+ * 仅对可重试的 Windows 文件占用错误进行重试，其他错误（如权限拒绝）直接抛出。
+ *
+ * 阻塞策略：优先用 Atomics.wait 同步等待（不占 CPU、不阻塞事件循环外的 IPC）；
+ * SharedArrayBuffer 不可用时降级为 busy-wait。最坏情况累计 750ms 同步阻塞，
+ * 这是为保持函数同步签名所做的取舍。
+ */
+function rmSyncWithRetry(target: string, options: RmOptions, maxAttempts = 5): void {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      rmSync(target, options)
+      return
+    } catch (err) {
+      lastErr = err
+      const code = (err as NodeJS.ErrnoException)?.code
+      if (!code || !RETRYABLE_FS_CODES.has(code)) throw err
+      if (attempt === maxAttempts) break
+      // 指数退避: 50ms, 100ms, 200ms, 400ms — 累计 750ms 内重试 5 次
+      const delayMs = 50 * Math.pow(2, attempt - 1)
+      sleepSync(delayMs)
+    }
+  }
+  throw lastErr
+}
+
+/**
+ * 同步阻塞等待指定毫秒数。优先用 Atomics.wait（不占 CPU），
+ * SharedArrayBuffer 不可用时降级为 busy-wait。
+ */
+function sleepSync(ms: number): void {
+  try {
+    const buf = new Int32Array(new SharedArrayBuffer(4))
+    Atomics.wait(buf, 0, 0, ms)
+  } catch {
+    const start = Date.now()
+    while (Date.now() - start < ms) { /* busy wait fallback */ }
+  }
+}
+
+/**
  * 迁移 Agent 会话到另一个工作区
  *
  * 操作步骤：
@@ -475,18 +522,35 @@ export function moveSessionToWorkspace(sessionId: string, targetWorkspaceId: str
           try {
             const contents = readdirSync(destDir)
             if (contents.length === 0) {
-              rmSync(destDir, { recursive: true })
+              rmSyncWithRetry(destDir, { recursive: true, force: true })
               console.log(`[Agent 会话] 已清理空目标目录: ${destDir}`)
             } else {
               // 目标目录非空，合并：先移除目标，再移动源
-              rmSync(destDir, { recursive: true })
+              rmSyncWithRetry(destDir, { recursive: true, force: true })
               console.log(`[Agent 会话] 已清理非空目标目录（以源目录为准）: ${destDir}`)
             }
           } catch (cleanupError) {
             console.warn(`[Agent 会话] 清理目标目录失败，跳过目录迁移:`, cleanupError)
+            // 清理失败时不可继续 cpSync，否则会与残留目录混合
+            throw cleanupError
           }
         }
-        renameSync(srcDir, destDir)
+        // Windows 上 fs.watch 递归监听会导致 renameSync 抛出 EBUSY，
+        // 使用 cpSync + rmSync 替代 renameSync 以绕过文件句柄锁定。
+        // rmSync 仍可能因 watcher 句柄未释放抛 EBUSY/EPERM，使用带退避的重试。
+        try {
+          cpSync(srcDir, destDir, { recursive: true, force: true })
+          rmSyncWithRetry(srcDir, { recursive: true, force: true })
+        } catch (moveErr) {
+          // cpSync 成功但 rmSync 失败：回滚 destDir 副本，保证失败语义干净
+          // （索引未更新，下次重试时 destDir 不应残留）
+          try {
+            rmSyncWithRetry(destDir, { recursive: true, force: true })
+          } catch (rollbackErr) {
+            console.warn(`[Agent 会话] 回滚目标目录失败:`, rollbackErr)
+          }
+          throw moveErr
+        }
         console.log(`[Agent 会话] 已移动工作目录: ${srcDir} → ${destDir}`)
       }
     }
