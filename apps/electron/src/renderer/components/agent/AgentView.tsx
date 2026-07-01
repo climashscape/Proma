@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Sparkles, Eye } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Sparkles, Eye, Loader2 } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -2051,6 +2051,9 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     setProcessGroupsKeepExpanded,
   ])
 
+  // 后台任务运行中且无输入文本时显示状态标签；用户开始输入后让出位置给 Send 按钮，
+  // 避免用户在后台任务运行期间无法发送新消息（backgroundWaiting 状态支持注入式发送）
+  const showBackgroundWaitingBadge = backgroundWaiting && !hasTextInput
   const inputTrailingNode = streaming && !hasTextInput ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -2066,6 +2069,18 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       </TooltipTrigger>
       <TooltipContent side="top">
         <p>停止 Agent ({getAcceleratorDisplay(getActiveAccelerator('stop-generation'))})</p>
+      </TooltipContent>
+    </Tooltip>
+  ) : showBackgroundWaitingBadge ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-1.5 px-2 h-[36px] rounded-full bg-blue-500/10 text-blue-500/80">
+          <Loader2 className="size-4 animate-spin" />
+          <span className="text-xs font-medium whitespace-nowrap">后台任务运行中</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <p>Agent 正在后台执行任务，您可以继续输入消息</p>
       </TooltipContent>
     </Tooltip>
   ) : (

@@ -515,15 +515,6 @@ export const agentStartedAtAtom = atom<number | undefined>((get) => {
   return get(agentStreamingStatesAtom).get(currentId)?.startedAt
 })
 
-export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {
-  const states = get(agentStreamingStatesAtom)
-  const ids = new Set<string>()
-  for (const [id, state] of states) {
-    if (state.running) ids.add(id)
-  }
-  return ids
-})
-
 /** 侧边栏会话指示点状态 */
 export type SessionIndicatorStatus = 'idle' | 'running' | 'blocked' | 'completed'
 
@@ -555,6 +546,10 @@ export const dockBadgeCountAtom = atom<number>((get) => {
 /**
  * 每个会话的指示点状态（只包含非 idle 的会话）
  * 优先级：blocked > running > completed > idle
+ *
+ * backgroundWaiting 状态（后台任务运行中、主循环已空闲）也映射为 'running'，
+ * 与真运行态同态显示蓝色脉冲——侧边栏与 Tab 不区分两者；
+ * AgentView 输入区通过独立的 backgroundWaiting 徽章做差异化提示。
  */
 export const agentSessionIndicatorMapAtom = atom<Map<string, SessionIndicatorStatus>>((get) => {
   const streamStates = get(agentStreamingStatesAtom)
@@ -566,7 +561,7 @@ export const agentSessionIndicatorMapAtom = atom<Map<string, SessionIndicatorSta
   const map = new Map<string, SessionIndicatorStatus>()
 
   for (const [id, state] of streamStates) {
-    if (!state.running) continue
+    if (!state.running && !state.backgroundWaiting) continue
     const hasBlock = (pendingPerms.get(id)?.length ?? 0) > 0
       || (pendingAskUser.get(id)?.length ?? 0) > 0
       || (pendingExitPlan.get(id)?.length ?? 0) > 0

@@ -12,7 +12,6 @@ import {
   streamingConversationIdsAtom,
 } from './chat-atoms'
 import {
-  agentRunningSessionIdsAtom,
   agentSessionIndicatorMapAtom,
   unviewedCompletedSessionIdsAtom,
 } from './agent-atoms'
@@ -141,14 +140,15 @@ export const activeSessionIdAtom = atom<string | null>((get) => {
 export const tabStreamingMapAtom = atom<Map<string, boolean>>((get) => {
   const tabs = get(tabsAtom)
   const chatStreaming = get(streamingConversationIdsAtom)
-  const agentRunning = get(agentRunningSessionIdsAtom)
+  const agentIndicator = get(agentSessionIndicatorMapAtom)
   const map = new Map<string, boolean>()
   for (const tab of tabs) {
     if (tab.type === 'scratch') continue
     if (tab.type === 'chat') {
       map.set(tab.id, chatStreaming.has(tab.sessionId))
     } else if (tab.type === 'agent') {
-      map.set(tab.id, agentRunning.has(tab.sessionId))
+      const status = agentIndicator.get(tab.sessionId)
+      map.set(tab.id, status === 'running' || status === 'blocked')
     }
   }
   return map
