@@ -39,7 +39,7 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // 内容容器：吃 --dialog token、xl 圆角、shadow-xl（多层柔阴影 + 暗色 inset 顶高光）；
+        // 内容容器：吃 --dialog token、xl 圆角、shadow-xl（多层柔阴影，暗色仅外阴影无 inset 高光）；
         // hairline 边框（border/50）替代默认实色边；动画时长稍微拉长到 250ms 配合 blur 过渡更自然
         "fixed left-[50%] top-[50%] z-[100] grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4",
         "border border-border/50 bg-dialog text-dialog-foreground rounded-xl p-6 shadow-xl duration-200 titlebar-no-drag",
