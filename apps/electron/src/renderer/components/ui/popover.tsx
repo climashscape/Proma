@@ -24,7 +24,7 @@ const PopoverContent = React.forwardRef<
       align={align}
       sideOffset={sideOffset}
       className={cn(
-        // lg 圆角 + hairline 边框 + shadow-lg（多层柔阴影 + dark inset 高光）
+        // lg 圆角 + hairline 边框 + shadow-lg（多层柔阴影，暗色仅外阴影无 inset 高光）
         "z-[100] w-72 rounded-lg border border-border/50 bg-popover p-4 text-popover-foreground shadow-lg outline-none titlebar-no-drag",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",

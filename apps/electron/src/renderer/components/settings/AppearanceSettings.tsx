@@ -440,7 +440,7 @@ function StyleCard({
       {/* 图片卡片本体 */}
       <div
         className={cn(
-          'relative rounded-lg overflow-hidden w-[99px] h-[183px] transition-all duration-150',
+          'relative rounded-lg overflow-hidden w-[99px] h-[183px] transition-[box-shadow,transform] duration-150',
           isSelected
             ? 'ring-2 ring-primary shadow-lg shadow-primary/20'
             : 'ring-1 ring-border/50 group-hover:ring-border group-focus-visible:ring-2 group-focus-visible:ring-primary group-focus-visible:ring-offset-1'
@@ -453,7 +453,7 @@ function StyleCard({
           <img
             src={style.image}
             alt={style.name}
-            loading="lazy"
+            loading="eager"
             decoding="async"
             className="w-full h-full object-cover"
             style={style.objectPosition ? { objectPosition: style.objectPosition } : undefined}

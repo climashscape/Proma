@@ -89,11 +89,14 @@
   }
 
   .dark {
+    /* 暗色阴影去掉 inset 顶高光：原 inset 0 1px 0 hsl(0 0% 100% / N) 在深色滑块/按钮顶部
+     * 显现成亮线，与向下外阴影叠加导致视觉质心下沉（"偏下"错觉）。去掉后顶部不再发亮，
+     * 浮起感由外阴影承担，几何居中的滑块视觉上也居中。影响所有 shadow-* 浮起元素。 */
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
-    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), inset 0 1px 0 0 hsl(0 0% 100% / 0.06);
-    --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 2px 4px 0 rgb(0 0 0 / 0.35), inset 0 1px 0 0 hsl(0 0% 100% / 0.08);
-    --shadow-lg: 0 16px 32px -8px rgb(0 0 0 / 0.6), 0 6px 12px -2px rgb(0 0 0 / 0.4), inset 0 1px 0 0 hsl(0 0% 100% / 0.10);
-    --shadow-xl: 0 32px 64px -16px rgb(0 0 0 / 0.7), 0 16px 32px -8px rgb(0 0 0 / 0.5), inset 0 1px 0 0 hsl(0 0% 100% / 0.12);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5);
+    --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 2px 4px 0 rgb(0 0 0 / 0.35);
+    --shadow-lg: 0 16px 32px -8px rgb(0 0 0 / 0.6), 0 6px 12px -2px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 32px 64px -16px rgb(0 0 0 / 0.7), 0 16px 32px -8px rgb(0 0 0 / 0.5);
   }
 
   :root {
