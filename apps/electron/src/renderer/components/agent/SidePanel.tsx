@@ -117,7 +117,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const filesVersion = useAtomValue(workspaceFilesVersionAtom)
   const setFilesVersion = useSetAtom(workspaceFilesVersionAtom)
   const diffRefreshVersionMap = useAtomValue(agentDiffRefreshVersionAtom)
-  const diffRefreshVersion = diffRefreshVersionMap.get(sessionId) ?? 0
+  const diffRefreshVersion = diffRefreshVersionMap.get(sessionId)?.version ?? 0
   const hasFileChanges = filesVersion > 0
 
   // 文件面板必须跟随当前会话归属的项目。仅在会话元数据尚未加载时回退全局选择，
