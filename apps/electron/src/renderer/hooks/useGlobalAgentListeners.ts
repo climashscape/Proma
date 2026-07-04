@@ -41,6 +41,7 @@ import {
   unviewedCompletedSessionIdsAtom,
   agentSessionPathMapAtom,
   agentDiffRefreshVersionAtom,
+  bumpDiffRefreshVersion,
   askUserDraftsAtom,
 } from '@/atoms/agent-atoms'
 import {
@@ -765,9 +766,9 @@ export function useGlobalAgentListeners(): void {
               const entry = pendingWriteTools.get(event.toolUseId)!
               const writtenPath = entry.path
               pendingWriteTools.delete(event.toolUseId)
-              store.set(agentDiffRefreshVersionAtom, (prev) => {
-                const m = new Map(prev); m.set(sessionId, (prev.get(sessionId) ?? 0) + 1); return m
-              })
+              // 定向失效：仅命中该路径的预览面板需要重读，其他无关面板保留滚动
+              store.set(agentDiffRefreshVersionAtom, (prev) =>
+                bumpDiffRefreshVersion(prev, sessionId, writtenPath || undefined))
               if (writtenPath) {
                 buildWrittenFilePreviewInfo(sessionId, writtenPath).then((previewFile) => {
                   if (!previewFile || previewFile.previewOnly || !previewFile.inDiffScope) return
@@ -789,9 +790,9 @@ export function useGlobalAgentListeners(): void {
             // Bash git 突变命令完成时，仅刷新 diff 列表（不标记 unseen，避免红点）
             if (pendingGitMutateTools.has(event.toolUseId)) {
               pendingGitMutateTools.delete(event.toolUseId)
-              store.set(agentDiffRefreshVersionAtom, (prev) => {
-                const m = new Map(prev); m.set(sessionId, (prev.get(sessionId) ?? 0) + 1); return m
-              })
+              // git 突变可能影响多文件，保持全域刷新
+              store.set(agentDiffRefreshVersionAtom, (prev) =>
+                bumpDiffRefreshVersion(prev, sessionId))
             }
           } else if (event.type === 'shell_killed') {
             store.set(backgroundTasksAtomFamily(sessionId), (prev) => {
@@ -1156,12 +1157,9 @@ export function useGlobalAgentListeners(): void {
     const fileContentHashMap = new Map<string, string>()
     const HASH_MAX = 100
     let focusCheckSeq = 0
-    const bumpDiffRefresh = (sessionId: string) => {
-      store.set(agentDiffRefreshVersionAtom, (prev) => {
-        const m = new Map(prev)
-        m.set(sessionId, (prev.get(sessionId) ?? 0) + 1)
-        return m
-      })
+    const bumpDiffRefresh = (sessionId: string, writtenPath?: string) => {
+      store.set(agentDiffRefreshVersionAtom, (prev) =>
+        bumpDiffRefreshVersion(prev, sessionId, writtenPath))
     }
 
     const onWindowFocus = async () => {
@@ -1170,6 +1168,7 @@ export function useGlobalAgentListeners(): void {
 
       const previewFile = store.get(previewFileMapAtom).get(activeSessionId)
       if (!previewFile || previewFile.previewOnly !== true) {
+        // 非预览模式：全域刷新 diff 列表
         bumpDiffRefresh(activeSessionId)
         return
       }
@@ -1200,7 +1199,8 @@ export function useGlobalAgentListeners(): void {
 
         if (prevHash === undefined || prevHash !== hash) {
           // 首次建立 hash 基准时也刷新一次，避免用户离开窗口后首次外部修改被吞掉。
-          bumpDiffRefresh(activeSessionId)
+          // 定向到当前预览文件路径，避免误伤其他打开的无关预览面板。
+          bumpDiffRefresh(activeSessionId, previewFile.filePath)
         }
         fileContentHashMap.set(hashKey, hash)
 
@@ -1212,7 +1212,7 @@ export function useGlobalAgentListeners(): void {
       } catch {
         // 读取失败时删除旧 hash，并触发一次刷新让预览进入真实失败/空状态。
         fileContentHashMap.delete(hashKey)
-        bumpDiffRefresh(activeSessionId)
+        bumpDiffRefresh(activeSessionId, previewFile.filePath)
       }
     }
     window.addEventListener('focus', onWindowFocus)

@@ -17,6 +17,7 @@ import {
   agentDiffViewModeAtom,
   agentDiffRefreshVersionAtom,
   agentSidePanelOpenAtom,
+  bumpDiffRefreshVersion,
 } from '@/atoms/agent-atoms'
 import { resolvedThemeAtom } from '@/atoms/theme'
 import { quotedSelectionMapAtom } from '@/atoms/preview-atoms'
@@ -90,6 +91,29 @@ const MAX_QUOTED_CHARS = 2000
 
 /** 滚动位置持久化：key = `${sessionId}:${filePath}` */
 const scrollPositionCache = new Map<string, { top: number; left: number }>()
+
+/**
+ * 判断定向刷新的 writtenPath 是否指向当前预览文件 filePath。
+ * - writtenPath 通常为工具 input 给的绝对路径
+ * - filePath 可能是相对路径（来自 previewFileMap）
+ *
+ * 比较策略：统一为正斜杠 + 小写后，判断任一方以"对方 + /"结尾（包含关系），
+ * 或两者完全相等。覆盖 Windows 大小写不敏感与绝对/相对路径形态差异。
+ *
+ * 注意：endsWith 包含判断在极端情况下可能误判（如 /other/src/a.ts 包含 src/a.ts），
+ * 误判方向为"认为相关 → 不冻结 → 会刷新"，等价于修复前的全域行为，不会导致漏刷新。
+ */
+function isSamePreviewFile(writtenPath: string, filePath: string): boolean {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const a = norm(writtenPath)
+  const b = norm(filePath)
+  if (!a || !b) return false
+  if (a === b) return true
+  // writtenPath 是绝对路径、filePath 是相对路径时，writtenPath 以 "/filePath" 结尾
+  if (a.endsWith('/' + b)) return true
+  if (b.endsWith('/' + a)) return true
+  return false
+}
 
 function scrollCacheKey(sessionId: string, filePath: string): string {
   return `${sessionId}:${filePath}`
@@ -263,8 +287,20 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const [copied, setCopied] = React.useState(false)
   const refreshVersionMap = useAtomValue(agentDiffRefreshVersionAtom)
   const setRefreshVersionMap = useSetAtom(agentDiffRefreshVersionAtom)
-  const refreshVersion = refreshVersionMap.get(sessionId) ?? 0
-  const previewContentVersion = previewOnly ? refreshVersion : 0
+  const refreshEntry = refreshVersionMap.get(sessionId)
+  const refreshVersion = refreshEntry?.version ?? 0
+  // 定向失效：writtenPath 给定且与当前预览文件不同 → 无关刷新，跳过重读保留滚动
+  const isUnrelatedRefresh = previewOnly
+    ? (refreshEntry?.writtenPath !== undefined && !isSamePreviewFile(refreshEntry.writtenPath, filePath))
+    : false
+  // 无关 bump 时冻结 previewContentVersion，避免 cacheKey/PierreFile 误判内容变化重算。
+  // 渲染期写 ref 在此安全：isUnrelatedRefresh 由 atom 派生，同次渲染内 Jotai 快照一致，
+  // 并发渲染两次读到的值相同，ref 最终值稳定。
+  const effectivePreviewVersionRef = React.useRef(0)
+  if (!isUnrelatedRefresh) {
+    effectivePreviewVersionRef.current = previewOnly ? refreshVersion : 0
+  }
+  const previewContentVersion = effectivePreviewVersionRef.current
   const theme = useAtomValue(resolvedThemeAtom)
   const [tocOpen, setTocOpen] = useAtom(markdownTocOpenAtom)
 
@@ -560,6 +596,8 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   // 纯预览模式也跟随 refreshVersion 失效，保证同一文件二次写入后重新读盘。
   // 命中缓存时跳过 loading 闪烁直接渲染；未命中走 IPC 拉取
   React.useEffect(() => {
+    // 定向失效：本次 bump 由其他文件触发，当前预览面板无需重读，保留滚动与内容
+    if (isUnrelatedRefresh) return
     let cancelled = false
 
     // 所有文件类型均可缓存（含 PDF/DOCX/Office/Image）
@@ -689,7 +727,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     load()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, dirPath, gitRoot, previewOnly, previewContentVersion, fileAccess, isPdf, isDocx, isOfficePreview, isLegacyOffice, isImage, sessionId, ext, getContentCacheKey])
+  }, [filePath, dirPath, gitRoot, previewOnly, previewContentVersion, fileAccess, isPdf, isDocx, isOfficePreview, isLegacyOffice, isImage, sessionId, ext, getContentCacheKey, isUnrelatedRefresh])
 
   // refreshVersion 触发的静默刷新：仅 diff 模式、内容有变化时才更新 state
   const prevRefreshRef = React.useRef(-1)
@@ -723,7 +761,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     }
     refresh()
     return () => { cancelled = true }
-  }, [refreshVersion, previewOnly, filePath, dirPath, gitRoot, sessionId, getContentCacheKey])
+  }, [refreshVersion, previewOnly, filePath, dirPath, gitRoot, sessionId, getContentCacheKey, isUnrelatedRefresh])
 
   // diff 模式：内容加载完成后若新旧一致（无差异），通知父组件关闭预览面板
   const emptyDiffFiredRef = React.useRef(false)
@@ -770,15 +808,18 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const restoreRafRef = React.useRef(0)
 
   // WHEN content version changes (refreshVersion bump): delete stored scroll position
-  // 只在内容变化时清除，切换文件时保留位置以支持返回导航
+  // 只在内容变化时清除，切换文件时保留位置以支持返回导航。
+  // 无关 bump（写的是其他文件）：跳过删除，保留当前预览面板的滚动位置
   React.useEffect(() => {
     if (loading) return // still loading, don't clear yet
     if (prevRefreshVersionRef.current !== refreshVersion) {
-      scrollPositionCache.delete(scrollKey)
-      restoreScrollRef.current = false
+      if (!isUnrelatedRefresh) {
+        scrollPositionCache.delete(scrollKey)
+        restoreScrollRef.current = false
+      }
       prevRefreshVersionRef.current = refreshVersion
     }
-  }, [scrollKey, refreshVersion, loading])
+  }, [scrollKey, refreshVersion, loading, isUnrelatedRefresh])
 
   // RESTORE scroll position after cached content renders.
   // 等待滚动容器内容高度连续 3 帧稳定后再恢复，避免异步渲染
@@ -910,11 +951,8 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
         setOldContent('')
         setNewContent(draft)
         cacheSet(getContentCacheKey('preview', refreshVersion + 1), { oldContent: '', newContent: draft })
-        setRefreshVersionMap((prev) => {
-          const m = new Map(prev)
-          m.set(sessionId, (prev.get(sessionId) ?? 0) + 1)
-          return m
-        })
+        // 定向失效：自保存只刷新当前预览文件，避免误伤其他打开的无关预览面板
+        setRefreshVersionMap((prev) => bumpDiffRefreshVersion(prev, sessionId, fp))
         setAutosaveStatus('saved')
       }
       return true
@@ -946,12 +984,9 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   }, [fileAccess, filePath, isEditableText, markdownDraft, markdownSaving, persistMarkdownDraft])
 
   const handleManualRefresh = React.useCallback(() => {
-    setRefreshVersionMap((prev) => {
-      const m = new Map(prev)
-      m.set(sessionId, (prev.get(sessionId) ?? 0) + 1)
-      return m
-    })
-  }, [sessionId, setRefreshVersionMap])
+    // 手动刷新当前预览文件：定向失效，避免误伤其他无关预览面板
+    setRefreshVersionMap((prev) => bumpDiffRefreshVersion(prev, sessionId, filePath))
+  }, [sessionId, filePath, setRefreshVersionMap])
 
   const handleAddSelectionToAgent = React.useCallback(() => {
     if (!previewSelection) return
