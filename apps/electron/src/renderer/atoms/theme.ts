@@ -24,7 +24,7 @@ const INTERFACE_VARIANT_CACHE_KEY = 'proma-interface-variant'
 function getCachedThemeMode(): ThemeMode {
   try {
     const cached = localStorage.getItem(THEME_CACHE_KEY)
-    if (cached === 'light' || cached === 'dark' || cached === 'system' || cached === 'special') {
+    if (cached === 'light' || cached === 'dark' || cached === 'system' || cached === 'special' || cached === 'solar') {
       return cached
     }
   } catch {
@@ -99,6 +99,18 @@ function cacheInterfaceVariant(variant: InterfaceVariant): void {
 /** 用户选择的主题模式 */
 export const themeModeAtom = atom<ThemeMode>(getCachedThemeMode())
 
+/** 日出日落模式的位置（用户选定城市），themeMode='solar' 时使用 */
+export const solarLocationAtom = atom<{ lat: number; lng: number; name: string } | null>(null)
+
+/**
+ * 日出日落模式当前是否白天（true）/ 夜晚（false）
+ *
+ * 由 main.tsx 的每分钟轮询 effect 写入，确保跨过日出/日落时刻时
+ * resolvedThemeAtom 能自动重算，让 diff/toast 等消费 resolvedThemeAtom
+ * 的组件配色与主 UI 同步切换。
+ */
+export const solarIsDaytimeAtom = atom<boolean>(true)
+
 /** 用户选择的特殊风格 */
 export const themeStyleAtom = atom<ThemeStyle>(getCachedThemeStyle())
 
@@ -113,6 +125,11 @@ export const resolvedThemeAtom = atom<'light' | 'dark'>((get) => {
   const mode = get(themeModeAtom)
   if (mode === 'system') {
     return get(systemIsDarkAtom) ? 'dark' : 'light'
+  }
+  if (mode === 'solar') {
+    const loc = get(solarLocationAtom)
+    if (!loc) return 'dark' // 未配置位置临时退回深色
+    return get(solarIsDaytimeAtom) ? 'light' : 'dark'
   }
   if (mode === 'special') {
     const style = get(themeStyleAtom)
@@ -147,6 +164,10 @@ export function applyThemeToDOM(themeMode: ThemeMode, themeStyle: ThemeStyle = '
     targetStyleClass = `theme-${themeStyle}`
     targetIsDark = themeStyle.endsWith('-dark')
   } else if (themeMode === 'system') {
+    targetIsDark = systemIsDark
+  } else if (themeMode === 'solar') {
+    // solar 模式：第三个形参 systemIsDark 在此复用为「是否夜晚」槽位
+    // （调用方传入 !isDaytime(...)），不读取真实系统主题
     targetIsDark = systemIsDark
   } else {
     targetIsDark = themeMode === 'dark'
@@ -213,11 +234,17 @@ export async function initializeTheme(
   setSystemIsDark: (isDark: boolean) => void,
   setThemeStyle?: (style: ThemeStyle) => void,
   setInterfaceVariant?: (variant: InterfaceVariant) => void,
+  setSolarLocation?: (loc: { lat: number; lng: number; name: string } | null) => void,
 ): Promise<() => void> {
   // 从主进程加载持久化设置
   const settings = await window.electronAPI.getSettings()
   setThemeMode(settings.themeMode)
   cacheThemeMode(settings.themeMode)
+
+  // 加载日出日落位置
+  if (setSolarLocation) {
+    setSolarLocation(settings.solarLocation ?? null)
+  }
 
   // 加载特殊风格
   if (setThemeStyle && settings.themeStyle) {
@@ -255,6 +282,9 @@ export async function initializeTheme(
       setInterfaceVariant(variant)
       cacheInterfaceVariant(variant)
     }
+    if (setSolarLocation && payload.solarLocation !== undefined) {
+      setSolarLocation(payload.solarLocation ?? null)
+    }
   })
 
   return () => {
@@ -279,6 +309,13 @@ export async function updateThemeMode(mode: ThemeMode): Promise<void> {
 export async function updateThemeStyle(style: ThemeStyle): Promise<void> {
   cacheThemeStyle(style)
   await window.electronAPI.updateSettings({ themeStyle: style })
+}
+
+/**
+ * 更新日出日落位置并持久化
+ */
+export async function updateSolarLocation(loc: { lat: number; lng: number; name: string } | null): Promise<void> {
+  await window.electronAPI.updateSettings({ solarLocation: loc ?? undefined })
 }
 
 /**

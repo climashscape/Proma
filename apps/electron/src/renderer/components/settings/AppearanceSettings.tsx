@@ -20,12 +20,16 @@ import {
   themeStyleAtom,
   interfaceVariantAtom,
   systemIsDarkAtom,
+  solarLocationAtom,
   updateThemeMode,
   updateThemeStyle,
   updateInterfaceVariant,
+  updateSolarLocation,
   applyThemeToDOM,
   applyInterfaceVariantToDOM,
 } from '@/atoms/theme'
+import { searchCities, type City } from '@/lib/cities'
+import { getSunriseSunset, isDaytime, nextTransition } from '@/lib/solar'
 import {
   markdownFontSizeAtom,
   updateMarkdownFontSize,
@@ -64,6 +68,7 @@ const THEME_OPTIONS = [
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
   { value: 'system', label: '跟随系统' },
+  { value: 'solar', label: '日出日落' },
   { value: 'special', label: '特殊风格' },
 ]
 
@@ -190,6 +195,7 @@ export function AppearanceSettings(): React.ReactElement {
   const [themeStyle, setThemeStyle] = useAtom(themeStyleAtom)
   const [interfaceVariant, setInterfaceVariant] = useAtom(interfaceVariantAtom)
   const systemIsDark = useAtomValue(systemIsDarkAtom)
+  const [solarLocation, setSolarLocation] = useAtom(solarLocationAtom)
   const [markdownFontSize, setMarkdownFontSize] = useAtom(markdownFontSizeAtom)
   const [previewModePref, setPreviewModePref] = useAtom(previewModePreferenceAtom)
 
@@ -202,9 +208,24 @@ export function AppearanceSettings(): React.ReactElement {
     if (mode !== 'special') {
       setThemeStyle('default')
       updateThemeStyle('default')
+    }
+    if (mode === 'solar') {
+      // solar 模式根据当前位置计算深浅，未配置位置时退回深色
+      const isDark = solarLocation ? !isDaytime(solarLocation.lat, solarLocation.lng) : true
+      applyThemeToDOM('solar', 'default', isDark)
+    } else {
       applyThemeToDOM(mode, 'default', systemIsDark)
     }
-  }, [setThemeMode, setThemeStyle, systemIsDark])
+  }, [setThemeMode, setThemeStyle, systemIsDark, solarLocation])
+
+  /** 选择日出日落位置 */
+  const handleSolarLocationSelect = React.useCallback((city: City) => {
+    const loc = { lat: city.lat, lng: city.lng, name: city.name }
+    setSolarLocation(loc)
+    updateSolarLocation(loc)
+    // 选定位置后立即应用一次主题
+    applyThemeToDOM('solar', 'default', !isDaytime(city.lat, city.lng))
+  }, [setSolarLocation])
 
   /** 选择特殊风格 */
   const handleStyleSelect = React.useCallback((style: ThemeStyle) => {
@@ -246,6 +267,18 @@ export function AppearanceSettings(): React.ReactElement {
             onValueChange={handleThemeChange}
             options={THEME_OPTIONS}
           />
+
+          {/* 日出日落模式：城市选择 + 下次切换预览 */}
+          {themeMode === 'solar' && (
+            <SolarLocationPicker
+              location={solarLocation}
+              onSelect={handleSolarLocationSelect}
+              onClear={() => {
+                setSolarLocation(null)
+                updateSolarLocation(null)
+              }}
+            />
+          )}
 
           <SettingsSegmentedControl
             label="界面风格"
@@ -476,5 +509,127 @@ function StyleCard({
         {style.name}
       </span>
     </button>
+  )
+}
+
+/** 日出日落模式的城市选择器 + 下次切换预览 */
+function SolarLocationPicker({
+  location,
+  onSelect,
+  onClear,
+}: {
+  location: { lat: number; lng: number; name: string } | null
+  onSelect: (city: City) => void
+  onClear: () => void
+}): React.ReactElement {
+  const [query, setQuery] = React.useState('')
+  const [showResults, setShowResults] = React.useState(false)
+  const results = React.useMemo(() => (showResults ? searchCities(query, 30) : []), [query, showResults])
+
+  // 下次切换预览（位置已配置时）
+  const transition = React.useMemo(() => {
+    if (!location) return null
+    return nextTransition(location.lat, location.lng)
+  }, [location])
+
+  // 当前日出日落时刻（位置已配置时）
+  const sunTimes = React.useMemo(() => {
+    if (!location) return null
+    return getSunriseSunset(new Date(), location.lat, location.lng)
+  }, [location])
+
+  const formatTime = (d: Date | null): string => {
+    if (!d) return '—（极昼/极夜）'
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  }
+
+  return (
+    <div className="px-4 py-3 space-y-3">
+      <div className="space-y-1">
+        <div className="text-sm font-medium text-foreground">日出日落位置</div>
+        <div className="text-xs text-muted-foreground">
+          应用将根据此位置的日出日落时刻自动切换深浅色，不依赖系统设置
+        </div>
+      </div>
+
+      {/* 当前位置 + 下次切换预览 */}
+      {location && (
+        <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">当前位置</span>
+            <span className="font-medium text-foreground">{location.name}</span>
+          </div>
+          {sunTimes && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">今日日出</span>
+                <span className="text-foreground">{formatTime(sunTimes.sunrise)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">今日日落</span>
+                <span className="text-foreground">{formatTime(sunTimes.sunset)}</span>
+              </div>
+            </>
+          )}
+          {transition && (
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">下次切换</span>
+              <span className="text-foreground">
+                {formatTime(transition.at)} → {transition.to === 'dark' ? '深色' : '浅色'}
+              </span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+          >
+            清除位置
+          </button>
+        </div>
+      )}
+
+      {/* 搜索框 */}
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setShowResults(true)
+          }}
+          onFocus={() => setShowResults(true)}
+          onBlur={() => setTimeout(() => setShowResults(false), 150)}
+          placeholder="搜索城市（如 北京、东京、纽约）"
+          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+        {showResults && results.length > 0 && (
+          <div className="absolute z-10 mt-1 w-full max-h-60 overflow-auto rounded-md border border-border bg-background shadow-lg">
+            {results.map((c) => (
+              <button
+                key={`${c.country}-${c.name}`}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onSelect(c)
+                  setQuery('')
+                  setShowResults(false)
+                }}
+                className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-muted/50 text-left"
+              >
+                <span className="text-foreground">{c.name}</span>
+                <span className="text-xs text-muted-foreground">{c.country}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!location && (
+        <div className="text-xs text-muted-foreground">
+          请先选择一个城市以启用日出日落切换
+        </div>
+      )}
+    </div>
   )
 }

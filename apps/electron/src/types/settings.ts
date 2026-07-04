@@ -177,8 +177,8 @@ export interface ShortcutOverrides {
   }
 }
 
-/** 主题模式 */
-export type ThemeMode = 'light' | 'dark' | 'system' | 'special'
+/** 主题模式：solar 为按真实日出日落自动切换 */
+export type ThemeMode = 'light' | 'dark' | 'system' | 'special' | 'solar'
 
 /** 所有合法的特殊风格值（白名单，新增主题时只需追加这里） */
 export const THEME_STYLES = [
@@ -236,6 +236,8 @@ export interface VisionRelaySettings {
 export interface AppSettings {
   /** 主题模式 */
   themeMode: ThemeMode
+  /** 日出日落模式的位置（用户选定城市），themeMode='solar' 时使用 */
+  solarLocation?: { lat: number; lng: number; name: string }
   /** 特殊风格主题 */
   themeStyle?: ThemeStyle
   /** 界面风格 */
