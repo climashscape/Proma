@@ -18,11 +18,14 @@ import {
   themeStyleAtom,
   interfaceVariantAtom,
   systemIsDarkAtom,
+  solarLocationAtom,
+  solarIsDaytimeAtom,
   resolvedThemeAtom,
   applyThemeToDOM,
   applyInterfaceVariantToDOM,
   initializeTheme,
 } from './atoms/theme'
+import { isDaytime } from './lib/solar'
 import {
   agentChannelIdAtom,
   agentModelIdAtom,
@@ -96,17 +99,21 @@ function ThemeInitializer(): null {
   const setThemeStyle = useSetAtom(themeStyleAtom)
   const setInterfaceVariant = useSetAtom(interfaceVariantAtom)
   const setSystemIsDark = useSetAtom(systemIsDarkAtom)
+  const setSolarLocation = useSetAtom(solarLocationAtom)
+  const setSolarIsDaytime = useSetAtom(solarIsDaytimeAtom)
   const themeMode = useAtomValue(themeModeAtom)
   const themeStyle = useAtomValue(themeStyleAtom)
   const interfaceVariant = useAtomValue(interfaceVariantAtom)
   const systemIsDark = useAtomValue(systemIsDarkAtom)
+  const solarLocation = useAtomValue(solarLocationAtom)
+  const solarIsDaytime = useAtomValue(solarIsDaytimeAtom)
 
   // 初始化：从主进程加载设置 + 订阅系统主题变化
   useEffect(() => {
     let isMounted = true
     let cleanup: (() => void) | undefined
 
-    initializeTheme(setThemeMode, setSystemIsDark, setThemeStyle, setInterfaceVariant).then((fn) => {
+    initializeTheme(setThemeMode, setSystemIsDark, setThemeStyle, setInterfaceVariant, setSolarLocation).then((fn) => {
       if (isMounted) {
         cleanup = fn
       } else {
@@ -119,12 +126,35 @@ function ThemeInitializer(): null {
       isMounted = false
       cleanup?.()
     }
-  }, [setThemeMode, setSystemIsDark, setThemeStyle, setInterfaceVariant])
+  }, [setThemeMode, setSystemIsDark, setThemeStyle, setInterfaceVariant, setSolarLocation])
+
+  // solar 模式：每分钟轮询日出日落状态，跨过日出/日落时刻时刷新主题
+  // 同时写入 solarIsDaytimeAtom，驱动 resolvedThemeAtom 重算（diff/toast 等消费方同步切换）
+  // 窗口从后台/睡眠恢复时 visibilitychange 立即刷新，避免最长 60s 延迟
+  useEffect(() => {
+    if (themeMode !== 'solar' || !solarLocation) return
+    const refresh = (): void => {
+      const daytime = isDaytime(solarLocation.lat, solarLocation.lng)
+      setSolarIsDaytime(daytime)
+      applyThemeToDOM('solar', 'default', !daytime)
+    }
+    refresh() // 立即执行一次，避免切到 solar 后等 60s 才首次应用
+    const interval = setInterval(refresh, 60_000)
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [themeMode, solarLocation, setSolarIsDaytime])
 
   // 响应式应用主题到 DOM
   // 用 useMemo 计算"实际会影响 DOM 的状态签名"作为唯一依赖：
   // special 模式下 systemIsDark 不影响最终 class，避免系统主题变化时触发无意义的
   // applyThemeToDOM 调用（配合 applyThemeToDOM 内部的幂等检查双重兜底）。
+  // solar 模式下签名包含当前白天/黑夜状态，确保跨过日出/日落时刻时触发切换。
   const themeSignature = useMemo(() => {
     if (themeMode === 'special') {
       return `special:${themeStyle}`
@@ -132,11 +162,20 @@ function ThemeInitializer(): null {
     if (themeMode === 'system') {
       return `system:${systemIsDark ? 'dark' : 'light'}`
     }
+    if (themeMode === 'solar') {
+      if (!solarLocation) return 'solar:unconfigured'
+      return `solar:${solarIsDaytime ? 'light' : 'dark'}`
+    }
     return themeMode
-  }, [themeMode, themeStyle, systemIsDark])
+  }, [themeMode, themeStyle, systemIsDark, solarLocation, solarIsDaytime])
 
   useEffect(() => {
-    applyThemeToDOM(themeMode, themeStyle, systemIsDark)
+    if (themeMode === 'solar') {
+      const isDark = solarLocation ? !solarIsDaytime : true
+      applyThemeToDOM('solar', 'default', isDark)
+    } else {
+      applyThemeToDOM(themeMode, themeStyle, systemIsDark)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeSignature])
 
