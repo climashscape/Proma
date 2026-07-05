@@ -1093,13 +1093,14 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       // syncActiveTabSideEffects 在 wasActive 分支同步到新激活标签，
       // 这里不要再按旧闭包值强制置 null，否则会覆盖新 sessionId，
       // 导致 RightSidePanel 消失（依赖 currentAgentSessionIdAtom）。
+      // 级联删除时在发起 IPC 前固定子会话快照，确保删除范围与弹窗展示一致，
+      // 避免弹窗打开期间新增的子会话被意外删除。
+      const childIds = cascade
+        ? getDirectDelegatedChildren(store.get(agentSessionsAtom), pendingDeleteId).map((child) => child.id)
+        : []
       try {
-        await window.electronAPI.deleteAgentSession(pendingDeleteId)
-        // 级联删除：当用户在确认弹窗选择"连子会话一起删"时，
-        // 同步删除所有委派子会话及其磁盘文件，避免孤儿会话。
-        if (cascade) {
-          const allSessions = store.get(agentSessionsAtom)
-          const childIds = getDirectDelegatedChildren(allSessions, pendingDeleteId).map((child) => child.id)
+        // 先删子后删父：若子会话删除中途失败，父会话仍在，UI 一致性更好。
+        if (childIds.length > 0) {
           const failedChildIds: string[] = []
           for (const childId of childIds) {
             try {
@@ -1112,20 +1113,18 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           if (failedChildIds.length > 0) {
             toast.error(`部分子会话删除失败（${failedChildIds.length} 个），请手动清理`)
           }
-          // 级联关闭子会话的标签页并清理缓存（复用 closeArchivedAgentTabs，统一 syncActiveTabSideEffects 调用）
-          if (childIds.length > 0) {
-            closeArchivedAgentTabs(childIds)
-            for (const childId of childIds) {
-              setExpandedDelegationParentIds((prev) => deleteSetEntry(prev, childId))
-              setAgentMessagesCache((prev) => {
-                if (!prev.has(childId)) return prev
-                const next = new Map(prev)
-                next.delete(childId)
-                return next
-              })
-            }
+          closeArchivedAgentTabs(childIds)
+          for (const childId of childIds) {
+            setExpandedDelegationParentIds((prev) => deleteSetEntry(prev, childId))
+            setAgentMessagesCache((prev) => {
+              if (!prev.has(childId)) return prev
+              const next = new Map(prev)
+              next.delete(childId)
+              return next
+            })
           }
         }
+        await window.electronAPI.deleteAgentSession(pendingDeleteId)
         // 全量刷新确保与后端同步
         const sessions = await window.electronAPI.listAgentSessions()
         setAgentSessions(sessions)
@@ -1690,10 +1689,16 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         ? getSyncableDelegatedChildren(sessions, id, draftSessionIds)
         : getArchivedDelegatedChildren(sessions, id, draftSessionIds)
       cascaded = delegatedChildren.length > 0
+      const failedChildIds: string[] = []
       for (const child of delegatedChildren) {
         if (!!child.archived !== targetArchived) {
-          const childUpdated = await window.electronAPI.toggleArchiveAgentSession(child.id)
-          changedChildIds.push(childUpdated.id)
+          try {
+            const childUpdated = await window.electronAPI.toggleArchiveAgentSession(child.id)
+            changedChildIds.push(childUpdated.id)
+          } catch (childError) {
+            console.error(`[侧边栏] 级联归档子会话失败 (${child.id}):`, childError)
+            failedChildIds.push(child.id)
+          }
         }
       }
       const refreshedSessions = delegatedChildren.length > 0
@@ -1710,16 +1715,19 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       if (updated.archived) {
         closeArchivedAgentTabs([updated.id, ...changedChildIds])
       }
-      toast.success(
-        updated.archived ? '已归档' : '已取消归档',
-        delegatedChildren.length > 0
-          ? { description: `已同步 ${delegatedChildren.length} 个子会话` }
-          : undefined,
-      )
+      if (failedChildIds.length > 0) {
+        toast.error(`部分子会话${updated.archived ? '归档' : '解归档'}失败（${failedChildIds.length} 个）`)
+      } else {
+        toast.success(
+          updated.archived ? '已归档' : '已取消归档',
+          delegatedChildren.length > 0
+            ? { description: `已同步 ${delegatedChildren.length} 个子会话` }
+            : undefined,
+        )
+      }
     } catch (error) {
       console.error('[侧边栏] 切换 Agent 会话归档失败:', error)
-      // 级联可能在中途失败，导致部分子会话已归档、部分未归档。
-      // 关闭已确认归档的子会话标签页，并重新拉取磁盘真实状态以避免不一致。
+      // 父会话操作本身失败。已成功归档的子会话仍需关闭标签并全量刷新。
       if (cascaded) {
         if (changedChildIds.length > 0) {
           closeArchivedAgentTabs(changedChildIds)
