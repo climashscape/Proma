@@ -8,7 +8,7 @@
  * 照搬 conversation-manager.ts 的模式。
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, rmSync, readdirSync, createReadStream, createWriteStream, type WriteStream, type RmOptions, cpSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, rmSync, renameSync, readdirSync, createReadStream, createWriteStream, type WriteStream, type RmOptions, cpSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { randomUUID } from 'node:crypto'
@@ -45,8 +45,13 @@ import { assertEnabledModelForChannel } from './agent-model-selection'
 import { copyForkWorkspaceFiles } from './agent-fork-workspace-copy'
 
 // Windows 上 fs.watch 递归监听持有的句柄释放是毫秒级延迟，
-// rmSync 可能抛 EBUSY/EPERM/ENOTEMPTY，这些错误可重试。
-const RETRYABLE_FS_CODES = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY'])
+// rmSync/renameSync 可能抛 EBUSY/EPERM/EACCES/ENOTEMPTY，这些错误可重试。
+// 注意：EPERM/EACCES 在非 Windows 平台通常是真实的权限拒绝，不应重试，故按平台区分。
+const RETRYABLE_FS_CODES = new Set(
+  process.platform === 'win32'
+    ? ['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']
+    : ['EBUSY', 'ENOTEMPTY'],
+)
 
 /**
  * 会话索引文件格式
@@ -383,7 +388,7 @@ export function deleteAgentSession(id: string): void {
       try {
         const sessionDir = getAgentSessionWorkspacePath(ws.slug, id)
         if (existsSync(sessionDir)) {
-          rmSync(sessionDir, { recursive: true, force: true })
+          rmSyncWithRetry(sessionDir, { recursive: true, force: true })
           console.log(`[Agent 会话] 已清理 session 工作目录: ${sessionDir}`)
         }
       } catch (error) {
@@ -407,7 +412,7 @@ export function deleteAgentSession(id: string): void {
       const histDir = join(fileHistoryDir, sid)
       if (existsSync(histDir)) {
         try {
-          rmSync(histDir, { recursive: true, force: true })
+          rmSyncWithRetry(histDir, { recursive: true, force: true })
           console.log(`[Agent 会话] 已清理 file-history: ${sid}`)
         } catch (e) {
           console.warn(`[Agent 会话] 清理 file-history 失败 (${sid}):`, e)
@@ -432,7 +437,7 @@ export function deleteAgentSession(id: string): void {
             }
           }
           try {
-            if (readdirSync(projPath).length === 0) rmSync(projPath, { recursive: true })
+            if (readdirSync(projPath).length === 0) rmSyncWithRetry(projPath, { recursive: true })
           } catch { /* ignore */ }
         }
       } catch { /* ignore */ }
@@ -446,7 +451,7 @@ export function deleteAgentSession(id: string): void {
  *
  * 仅对可重试的 Windows 文件占用错误进行重试，其他错误（如权限拒绝）直接抛出。
  *
- * 阻塞策略：优先用 Atomics.wait 同步等待（不占 CPU、不阻塞事件循环外的 IPC）；
+ * 阻塞策略：优先用 Atomics.wait 同步等待（不占 CPU）；
  * SharedArrayBuffer 不可用时降级为 busy-wait。最坏情况累计 750ms 同步阻塞，
  * 这是为保持函数同步签名所做的取舍。
  */
@@ -535,21 +540,29 @@ export function moveSessionToWorkspace(sessionId: string, targetWorkspaceId: str
             throw cleanupError
           }
         }
-        // Windows 上 fs.watch 递归监听会导致 renameSync 抛出 EBUSY，
-        // 使用 cpSync + rmSync 替代 renameSync 以绕过文件句柄锁定。
-        // rmSync 仍可能因 watcher 句柄未释放抛 EBUSY/EPERM，使用带退避的重试。
+        // 优先使用 renameSync（原子、快速、无需复制）。
+        // 仅在跨设备（EXDEV）或 Windows 上 fs.watch 句柄占用导致 rename 失败时
+        // （EBUSY/EPERM/EACCES，见 RETRYABLE_FS_CODES）降级为 cpSync + rmSyncWithRetry。
         try {
-          cpSync(srcDir, destDir, { recursive: true, force: true })
-          rmSyncWithRetry(srcDir, { recursive: true, force: true })
-        } catch (moveErr) {
-          // cpSync 成功但 rmSync 失败：回滚 destDir 副本，保证失败语义干净
-          // （索引未更新，下次重试时 destDir 不应残留）
+          renameSync(srcDir, destDir)
+        } catch (renameErr) {
+          const code = (renameErr as NodeJS.ErrnoException)?.code
+          // 非跨设备且非可重试的文件占用错误 → 真实错误，直接抛出
+          if (code !== 'EXDEV' && !(code && RETRYABLE_FS_CODES.has(code))) throw renameErr
+          // 降级：复制后删除源目录；rmSync 仍可能因 watcher 句柄未释放抛错，带退避重试
           try {
-            rmSyncWithRetry(destDir, { recursive: true, force: true })
-          } catch (rollbackErr) {
-            console.warn(`[Agent 会话] 回滚目标目录失败:`, rollbackErr)
+            cpSync(srcDir, destDir, { recursive: true, force: true })
+            rmSyncWithRetry(srcDir, { recursive: true, force: true })
+          } catch (moveErr) {
+            // cpSync 成功但 rmSync 失败：回滚 destDir 副本，保证失败语义干净
+            // （索引未更新，下次重试时 destDir 不应残留）
+            try {
+              rmSyncWithRetry(destDir, { recursive: true, force: true })
+            } catch (rollbackErr) {
+              console.warn(`[Agent 会话] 回滚目标目录失败:`, rollbackErr)
+            }
+            throw moveErr
           }
-          throw moveErr
         }
         console.log(`[Agent 会话] 已移动工作目录: ${srcDir} → ${destDir}`)
       }
