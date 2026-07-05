@@ -3,6 +3,8 @@
 
 appId: com.proma.app
 productName: Proma
+# Ch'iVerve 专用构建：productName 保持不变以兼容已有安装
+artifactName: "Proma-Setup-${version}.${ext}"
 copyright: Copyright © 2024-2026 Erlich Liu
 
 # Electron 版本（CI 环境 bun workspace 下无法自动检测，需显式指定）
@@ -152,10 +154,10 @@ nsis:
 
 # ============================================
 # 发布配置
-# 每个平台的 build job 通过 --publish always 直接上传到 GitHub Release。
-# electron-builder 会自动创建/复用 Release，并在多架构并行上传时合并 latest-mac.yml。
+# Ch'iVerve 专用构建：更新源指向 climashscape/Proma GitHub Releases
+# 构建后手动上传产物（latest.yml + 安装包）到 GitHub Releases 即可推送更新
 # ============================================
 publish:
   provider: github
-  owner: ErlichLiu
+  owner: climashscape
   repo: Proma

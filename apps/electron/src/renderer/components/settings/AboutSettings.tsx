@@ -7,13 +7,12 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { RefreshCw, Loader2, CheckCircle2, AlertCircle, Info, Terminal, ChevronDown, ChevronUp, ExternalLink, RotateCw } from 'lucide-react'
-import type { EnvironmentCheckResult, RuntimeStatus, WindowsShellPreference } from '@proma/shared'
+import { RefreshCw, Loader2, CheckCircle2, AlertCircle, Info, Terminal, RotateCw } from 'lucide-react'
+import type { EnvironmentCheckResult, RuntimeStatus } from '@proma/shared'
 import {
   SettingsSection,
   SettingsCard,
   SettingsRow,
-  SettingsSelect,
 } from './primitives'
 import { updateStatusAtom, updaterAvailableAtom, checkForUpdates } from '@/atoms/updater'
 import {
@@ -23,23 +22,17 @@ import {
 import { EnvironmentCheckCard } from '@/components/environment/EnvironmentCheckCard'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
-import { ReleaseNotesViewer } from './ReleaseNotesViewer'
 import { VersionHistory } from './VersionHistory'
 
 /** 从 package.json 构建时由 Vite define 注入 */
 declare const __APP_VERSION__: string
 const APP_VERSION = __APP_VERSION__
 
-const GITHUB_RELEASES_URL = 'https://github.com/ErlichLiu/Proma/releases'
-
 /** 更新状态卡片 */
 function UpdateCard(): React.ReactElement | null {
   const available = useAtomValue(updaterAvailableAtom)
   const status = useAtomValue(updateStatusAtom)
   const [checking, setChecking] = React.useState(false)
-  const [idleInstallScheduled, setIdleInstallScheduled] = React.useState(false)
-  const [showReleaseNotes, setShowReleaseNotes] = React.useState(false)
-  const [release, setRelease] = React.useState<import('@proma/shared').GitHubRelease | null>(null)
 
   // updater 不可用时不渲染
   if (!available) return null
@@ -54,45 +47,11 @@ function UpdateCard(): React.ReactElement | null {
     }
   }
 
-  const handleGoToDownload = (): void => {
-    const url = release?.html_url || GITHUB_RELEASES_URL
-    window.electronAPI.openExternal(url)
+  const handleQuitAndInstall = (): void => {
+    window.electronAPI.updater?.quitAndInstall()
   }
-
-  const handleInstallWhenIdle = (): void => {
-    void window.electronAPI.updater?.installWhenIdle()
-      .then((scheduled) => setIdleInstallScheduled(scheduled))
-      .catch(() => setIdleInstallScheduled(false))
-  }
-
-  const handleCancelIdleInstall = (): void => {
-    void window.electronAPI.updater?.cancelIdleInstall()
-      .then(() => setIdleInstallScheduled(false))
-  }
-
-  // 当检测到新版本时，获取完整的 release 信息
-  React.useEffect(() => {
-    if (status.status !== 'downloaded') setIdleInstallScheduled(false)
-  }, [status.status])
-
-  React.useEffect(() => {
-    if (status.status === 'available' && status.version && !release) {
-      window.electronAPI
-        .getReleaseByTag(`v${status.version}`)
-        .then((r) => {
-          if (r) {
-            setRelease(r)
-            setShowReleaseNotes(true)
-          }
-        })
-        .catch((err) => {
-          console.error('[更新] 获取 Release 信息失败:', err)
-        })
-    }
-  }, [status.status, status.version, release])
 
   const isChecking = checking || status.status === 'checking' || status.status === 'downloading'
-  const hasReleaseNotes = status.releaseNotes || release?.body
 
   return (
     <SettingsCard>
@@ -103,29 +62,12 @@ function UpdateCard(): React.ReactElement | null {
 
           {/* 操作按钮 */}
           {status.status === 'downloaded' ? (
-            idleInstallScheduled ? (
-              <button
-                onClick={handleCancelIdleInstall}
-                className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors"
-              >
-                取消安排
-              </button>
-            ) : (
-              <button
-                onClick={handleInstallWhenIdle}
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-              >
-                <RotateCw className="h-3.5 w-3.5" />
-                空闲时更新
-              </button>
-            )
-          ) : status.status === 'available' ? (
             <button
-              onClick={handleGoToDownload}
+              onClick={handleQuitAndInstall}
               className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-              前往下载
+              <RotateCw className="h-3.5 w-3.5" />
+              立即重启
             </button>
           ) : (
             <button
@@ -143,33 +85,6 @@ function UpdateCard(): React.ReactElement | null {
           )}
         </div>
       </SettingsRow>
-
-      {/* Release Notes（新版本可用时显示） */}
-      {status.status === 'available' && hasReleaseNotes && (
-        <div className="px-4 pb-4 border-t">
-          <button
-            onClick={() => setShowReleaseNotes(!showReleaseNotes)}
-            className="w-full flex items-center justify-between py-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <span className="text-sm font-medium">更新日志</span>
-            {showReleaseNotes ? (
-              <ChevronUp className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            )}
-          </button>
-
-          {showReleaseNotes && release && (
-            <div className="mt-2">
-              <ReleaseNotesViewer
-                release={release}
-                showHeader={false}
-                compact
-              />
-            </div>
-          )}
-        </div>
-      )}
     </SettingsCard>
   )
 }
@@ -186,8 +101,7 @@ function StatusText({ status, version, error }: {
     case 'available':
       return (
         <span className="text-xs text-primary flex items-center gap-1">
-          <ExternalLink className="h-3 w-3" />
-          新版本 v{version} 可用
+          新版本 v{version} 可用，正在后台下载...
         </span>
       )
     case 'downloading':
@@ -344,17 +258,13 @@ function EnvironmentCard(): React.ReactElement {
 /** Shell 环境卡片（Windows 平台）*/
 function ShellEnvironmentCard(): React.ReactElement | null {
   const [runtimeStatus, setRuntimeStatus] = React.useState<RuntimeStatus | null>(null)
-  const [shellPreference, setShellPreference] = React.useState<WindowsShellPreference>('auto')
   const [isChecking, setIsChecking] = React.useState(false)
 
-  // 初始化时加载运行时状态与用户偏好
+  // 初始化时加载运行时状态
   React.useEffect(() => {
-    Promise.all([window.electronAPI.getRuntimeStatus(), window.electronAPI.getSettings()])
-      .then(([status, settings]) => {
-        setRuntimeStatus(status)
-        setShellPreference(settings.windowsShellPreference ?? 'auto')
-      })
-      .catch((error) => console.error('[Shell 环境检测] 读取设置失败:', error))
+    window.electronAPI.getRuntimeStatus().then((status) => {
+      setRuntimeStatus(status)
+    })
   }, [])
 
   // 重新检测
@@ -371,13 +281,6 @@ function ShellEnvironmentCard(): React.ReactElement | null {
     }
   }
 
-  const handlePreferenceChange = async (value: string): Promise<void> => {
-    if (value !== 'auto' && value !== 'git-bash' && value !== 'wsl') return
-    const preference = value as WindowsShellPreference
-    await window.electronAPI.updateSettings({ windowsShellPreference: preference })
-    setShellPreference(preference)
-  }
-
   // 非 Windows 平台不显示
   if (!runtimeStatus || !runtimeStatus.shell) {
     return null
@@ -385,12 +288,6 @@ function ShellEnvironmentCard(): React.ReactElement | null {
 
   const { shell } = runtimeStatus
   const hasShell = shell.gitBash?.available || shell.wsl?.available
-  const resolvedShell = shellPreference === 'wsl' && shell.wsl.available
-    ? 'wsl'
-    : shellPreference === 'git-bash' && shell.gitBash.available
-      ? 'git-bash'
-      : shell.recommended
-  const resolvedShellLabel = resolvedShell === 'git-bash' ? 'Git Bash' : resolvedShell === 'wsl' ? 'WSL' : '无可用 Shell'
 
   return (
     <SettingsCard>
@@ -420,20 +317,6 @@ function ShellEnvironmentCard(): React.ReactElement | null {
       </div>
 
       <div className="p-4 space-y-3">
-        <SettingsSelect
-          label="Agent Shell"
-          description="默认使用 Git Bash，确保 Windows 项目与 Agent 工具使用同一套路径；选择 WSL 后，WSL 不可用时会回退到 Git Bash。"
-          value={shellPreference}
-          onValueChange={(value) => {
-            void handlePreferenceChange(value).catch((error) => console.error('[Shell 环境检测] 保存偏好失败:', error))
-          }}
-          options={[
-            { value: 'auto', label: '自动（推荐：Git Bash 优先）' },
-            { value: 'git-bash', label: 'Git Bash' },
-            { value: 'wsl', label: 'WSL（实验性）' },
-          ]}
-        />
-
         {/* Git Bash 检测卡片 */}
         <EnvironmentCheckCard
           name="Git Bash"
@@ -465,14 +348,16 @@ function ShellEnvironmentCard(): React.ReactElement | null {
           }
         />
 
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertDescription className="text-xs">
-            <strong>Agent 将使用：</strong>{resolvedShellLabel}
-            {shellPreference === 'wsl' && resolvedShell !== 'wsl' && '（WSL 不可用，已回退）'}
-            {shellPreference === 'git-bash' && resolvedShell !== 'git-bash' && '（Git Bash 不可用，已回退）'}
-          </AlertDescription>
-        </Alert>
+        {/* 推荐环境提示 */}
+        {shell.recommended && (
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription className="text-xs">
+              <strong>当前使用：</strong>
+              {shell.recommended === 'git-bash' ? 'Git Bash（推荐）' : 'WSL'}
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* 无可用环境警告 */}
         {!hasShell && (
@@ -493,8 +378,8 @@ function ShellEnvironmentCard(): React.ReactElement | null {
 export function AboutSettings(): React.ReactElement {
   return (
     <SettingsSection
-      title="关于 Proma"
-      description="集成通用 AI Agent 的下一代人工智能软件"
+      title="关于 Proma · Ch'iVerve"
+      description="集成通用 AI Agent 的下一代人工智能软件（Ch'iVerve 专用构建）"
     >
       <SettingsCard>
         <SettingsRow label="版本">
@@ -518,12 +403,12 @@ export function AboutSettings(): React.ReactElement {
         </SettingsRow>
         <SettingsRow label="项目地址">
           <a
-            href="https://github.com/ErlichLiu/Proma.git"
+            href="https://github.com/climashscape/Proma.git"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary hover:underline"
           >
-            github.com/ErlichLiu/Proma
+            github.com/climashscape/Proma
           </a>
         </SettingsRow>
       </SettingsCard>
