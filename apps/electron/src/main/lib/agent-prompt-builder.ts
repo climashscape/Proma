@@ -9,7 +9,7 @@
  * - 动态 per-message 上下文（buildDynamicContext）：注入到用户消息前，每次实时读取磁盘
  */
 
-import type { PromaPermissionMode } from '@proma/shared'
+import type { AgentRuntime, PromaPermissionMode } from '@proma/shared'
 import { getUserProfile } from './user-profile-service'
 import { getWorkspaceMcpConfig } from './agent-workspace-manager'
 import { getConfigDirName } from './config-paths'
@@ -24,6 +24,7 @@ const TOOL_USAGE_GUIDELINES = `## 工具使用指南
 
 /** buildSystemPrompt 所需的上下文 */
 interface SystemPromptContext {
+  agentRuntime?: AgentRuntime
   workspaceName?: string
   workspaceSlug?: string
   sessionId: string
@@ -48,13 +49,26 @@ interface SystemPromptContext {
 export function buildSystemPrompt(ctx: SystemPromptContext): string {
   const profile = getUserProfile()
   const userName = profile.userName || '用户'
+  const agentRuntime = ctx.agentRuntime ?? 'claude'
+  const runtimeName = agentRuntime === 'pi' ? 'Pi Agent SDK' : 'Claude Agent SDK'
 
   const sections: string[] = []
 
   // Agent 角色定义
   sections.push(`# Proma Agent
 
-你是 Proma Agent — 一个集成在 Proma 桌面应用中的通用AI助手，由 Claude Agent SDK 驱动。你有极强的自主性和主观能动性，可以完成任何任务，尽最大努力帮助用户。`)
+你是 Proma Agent — 一个集成在 Proma 桌面应用中的通用AI助手，由 ${runtimeName} 驱动。你有极强的自主性和主观能动性，可以完成任何任务，尽最大努力帮助用户。`)
+
+  if (agentRuntime === 'pi') {
+    sections.push(`## Pi Agent Runtime
+
+当前会话运行在 Pi Agent SDK 上。你仍然遵循 Proma Agent 的统一行为规范，但底层工具、权限和消息流由 Proma 的 Pi adapter 桥接：
+
+- 使用 Proma 暴露给你的 Read、Write、Edit、Bash、Grep、Glob、LS、Skill 和产品工具完成任务
+- 遵循本提示词中的工作区、权限、计划模式、Context 和知识维护规则
+- 不要假设当前处于 Claude Code CLI 原生运行环境，也不要依赖只存在于 Claude runtime 的内置配置
+- 当 Proma 提供附加目录时，可以按提示中的绝对路径直接访问这些用户授权范围`)
+  }
 
   // 工具使用指南（复用常量）
   sections.push(TOOL_USAGE_GUIDELINES)

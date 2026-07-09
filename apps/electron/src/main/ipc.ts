@@ -44,6 +44,7 @@ import type {
   RecentMessagesResult,
   AgentSessionMeta,
   AgentSendInput,
+  AgentRuntime,
   AgentWorkspace,
   AgentGenerateTitleInput,
   AgentSaveFilesInput,
@@ -814,6 +815,10 @@ function isFailureCacheFresh(key: string): boolean {
 function cacheNull(key: string): null {
   defaultAppFailureCache.set(key, Date.now())
   return null
+}
+
+function isAgentRuntime(value: unknown): value is AgentRuntime {
+  return value === 'claude' || value === 'pi'
 }
 
 /**
@@ -2318,6 +2323,38 @@ export function registerIpcHandlers(): void {
           throw err
         })
       }
+    }
+  )
+
+  // 切换指定会话的 Agent runtime（空闲后下一轮生效）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.UPDATE_SESSION_AGENT_RUNTIME,
+    async (_, sessionId: string, runtime: AgentRuntime): Promise<AgentSessionMeta> => {
+      if (!isAgentRuntime(runtime)) {
+        throw new Error(`无效的 Agent runtime: ${String(runtime)}`)
+      }
+      if (runtime !== 'claude' && getSettings().experimentalAgentRuntimeSwitchEnabled !== true) {
+        throw new Error('实验性 Agent 内核切换未开启')
+      }
+
+      const current = getAgentSessionMeta(sessionId)
+      if (!current) {
+        throw new Error(`Agent 会话不存在: ${sessionId}`)
+      }
+
+      if (isAgentSessionActive(sessionId)) {
+        throw new Error('Agent 正在运行，完成后再切换内核')
+      }
+
+      const previousRuntime = isAgentRuntime(current.agentRuntime) ? current.agentRuntime : undefined
+      const updates: Partial<Pick<AgentSessionMeta, 'agentRuntime' | 'sdkSessionId'>> = {
+        agentRuntime: runtime,
+      }
+      if (previousRuntime && previousRuntime !== runtime) {
+        updates.sdkSessionId = undefined
+      }
+
+      return updateAgentSessionMeta(sessionId, updates)
     }
   )
 
