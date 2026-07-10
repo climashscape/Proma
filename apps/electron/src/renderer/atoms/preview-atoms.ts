@@ -53,6 +53,9 @@ export const previewModePreferenceAtom = atomWithStorage<PreviewModePreference>(
   { getOnInit: true },
 )
 
+/** 代码预览换行偏好（默认 false = 不换行，保持现有行为） */
+export const previewCodeWrapAtom = atomWithStorage<boolean>('proma-preview-code-wrap', false, undefined, { getOnInit: true })
+
 /** 当前会话的预览面板是否打开（derived） */
 export const currentSessionPreviewOpenAtom = atom<boolean>((get) => {
   const sessionId = get(currentAgentSessionIdAtom)

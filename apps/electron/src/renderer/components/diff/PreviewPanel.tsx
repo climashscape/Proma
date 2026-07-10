@@ -7,11 +7,12 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Maximize2, PanelRight, X } from 'lucide-react'
+import { Maximize2, PanelRight, WrapText, X } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   previewPanelOpenMapAtom,
   previewFileMapAtom,
+  previewCodeWrapAtom,
   previewModePreferenceAtom,
 } from '@/atoms/preview-atoms'
 import {
@@ -45,6 +46,7 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps): React.ReactEleme
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const isSidePanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
   const [previewModePref, setPreviewModePref] = useAtom(previewModePreferenceAtom)
+  const [codeWrap, setCodeWrap] = useAtom(previewCodeWrapAtom)
 
   const currentFile = fileMap.get(sessionId) ?? null
 
@@ -125,6 +127,28 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps): React.ReactEleme
           </TooltipTrigger>
           <TooltipContent side="bottom">
             <p>作为标签页打开预览</p>
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {currentFile && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setCodeWrap((v) => !v)}
+              className={cn(
+                'flex items-center justify-center size-6 shrink-0 rounded transition-colors',
+                codeWrap
+                  ? 'text-primary bg-primary/10'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+              )}
+              aria-label={codeWrap ? '代码自动换行，点击改为横向滚动' : '代码横向滚动，点击改为自动换行'}
+            >
+              <WrapText className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            <p>{codeWrap ? '自动换行已开启，点击改为横向滚动' : '自动换行已关闭，点击改为自动换行'}</p>
           </TooltipContent>
         </Tooltip>
       )}

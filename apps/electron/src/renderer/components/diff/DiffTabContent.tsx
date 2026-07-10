@@ -6,7 +6,7 @@
  */
 
 import * as React from 'react'
-import { ChevronRight, Code2, Copy, Check, Eye, List, Pencil, RefreshCw, Save, X } from 'lucide-react'
+import { ChevronRight, Code2, Copy, Check, Eye, List, Pencil, RefreshCw, Save, WrapText, X } from 'lucide-react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import DOMPurify from 'dompurify'
 import { File as PierreFile } from '@pierre/diffs/react'
@@ -19,7 +19,7 @@ import {
   agentSidePanelOpenAtom,
 } from '@/atoms/agent-atoms'
 import { resolvedThemeAtom } from '@/atoms/theme'
-import { quotedSelectionMapAtom } from '@/atoms/preview-atoms'
+import { previewCodeWrapAtom, quotedSelectionMapAtom } from '@/atoms/preview-atoms'
 import {
   agentSideChatMapAtom,
   conversationsAtom,
@@ -266,6 +266,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const refreshVersion = refreshVersionMap.get(sessionId) ?? 0
   const previewContentVersion = previewOnly ? refreshVersion : 0
   const theme = useAtomValue(resolvedThemeAtom)
+  const [codeWrap, setCodeWrap] = useAtom(previewCodeWrapAtom)
   const [tocOpen, setTocOpen] = useAtom(markdownTocOpenAtom)
 
   const ext = getExtension(filePath)
@@ -489,10 +490,10 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const pierreOptions = React.useMemo(() => ({
     theme: { dark: 'one-dark-pro' as const, light: 'one-light' as const },
     disableFileHeader: true,
-    overflow: 'scroll' as const,
+    overflow: (codeWrap ? 'wrap' : 'scroll') as 'scroll' | 'wrap',
     themeType: theme as 'light' | 'dark' | 'system',
     unsafeCSS: PIERRE_FILE_CSS,
-  }), [theme])
+  }), [theme, codeWrap])
   const markdownFileAccess = React.useMemo(() => {
     const candidateBasePaths: string[] = []
     const slash = filePath.lastIndexOf('/')
@@ -1188,6 +1189,20 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
         >
           <RefreshCw className="size-3.5" />
         </button>
+
+        {previewOnly && !isMarkdown && !isPdf && !isImage && !isDocx && !isOfficePreview && !isLegacyOffice && (
+          <button
+            type="button"
+            onClick={() => setCodeWrap((v) => !v)}
+            className={cn(
+              'p-1 rounded hover:bg-foreground/[0.06] shrink-0',
+              codeWrap ? 'text-foreground/70' : 'text-foreground/40 hover:text-foreground/60',
+            )}
+            title={codeWrap ? '当前为自动换行，点击改为横向滚动' : '当前为横向滚动，点击改为自动换行'}
+          >
+            <WrapText className="size-3.5" />
+          </button>
+        )}
 
         {isMarkdown && !markdownEditing && (
           <button
