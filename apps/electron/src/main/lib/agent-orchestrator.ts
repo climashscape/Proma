@@ -58,6 +58,7 @@ import { applyAgentModelRoutingToEnv, resolveAgentModelRouting } from './agent-m
 import { validateToolInput } from './agent-tool-input-validator'
 import { estimateTokenCount, WRITE_CONTENT_TOKEN_THRESHOLD } from './agent-tool-token-estimator'
 import { injectBuiltinMcpServers } from './builtin-mcp/registry'
+import { buildPiBuiltinTools } from './adapters/pi-builtin-tools'
 import type { AgentRuntimeEnv } from './agent-runtime-env'
 
 // ===== 类型定义 =====
@@ -1215,6 +1216,7 @@ export class AgentOrchestrator {
 
       // 10. 构建 MCP 服务器配置 + 记忆工具 + 生图工具 + 自定义工具
       const mcpServers = this.buildMcpServers(workspaceSlug)
+      let piBuiltinTools: unknown[] = []
       const builtinMcpResult = agentRuntime === 'claude' && sdk
         ? await injectBuiltinMcpServers({
           sdk,
@@ -1229,7 +1231,20 @@ export class AgentOrchestrator {
           triggeredBy: input.triggeredBy,
           sessionMeta,
         })
-        : { collaborationAvailable: false }
+        : await (async () => {
+          const piSdk = await import('@earendil-works/pi-coding-agent')
+          const result = await buildPiBuiltinTools(piSdk, {
+            sessionId,
+            channelId,
+            modelId,
+            workspaceId,
+            workspaceSlug,
+            permissionMode: permissionModeOverride ?? sessionMeta?.permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+            triggeredBy: input.triggeredBy,
+          })
+          piBuiltinTools = result.tools
+          return { collaborationAvailable: result.collaborationAvailable }
+        })()
       const collaborationAvailable = builtinMcpResult.collaborationAvailable
 
       // 合并外部注入的自定义 MCP 服务器（如飞书群聊工具）
@@ -1571,6 +1586,7 @@ export class AgentOrchestrator {
         ...(appSettings.agentMaxBudgetUsd != null && appSettings.agentMaxBudgetUsd > 0 && {
           maxBudgetUsd: appSettings.agentMaxBudgetUsd,
         }),
+        ...(piBuiltinTools.length > 0 && { customTools: piBuiltinTools as PiAgentQueryOptions['customTools'] }),
         onSessionId: handleSessionId,
         onModelResolved: handleModelResolved,
         onContextWindow: handleContextWindow,
