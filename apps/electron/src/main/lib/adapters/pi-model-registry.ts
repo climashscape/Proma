@@ -182,7 +182,7 @@ export async function buildModel(sdk: PiSdk, input: PiAgentQueryOptions) {
   const headers = buildPiRequestHeaders(input.provider, input.apiKey)
   registry.registerProvider(providerName, {
     name: input.channelName ?? providerName,
-    ...(runtimeApiKey ? { apiKey: runtimeApiKey } : {}),
+    apiKey: input.apiKey,
     ...(headers ? { headers } : {}),
     api,
     baseUrl,
