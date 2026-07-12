@@ -441,7 +441,6 @@ export class AnthropicAdapter implements ProviderAdapter {
 
   buildTitleRequest(input: TitleRequestInput): ProviderRequest {
     const url = this.resolveMessagesUrl(input.baseUrl)
-    const capability = detectThinkingCapability(this.providerType, input.modelId)
 
     const body: Record<string, unknown> = {
       model: input.modelId,
@@ -449,12 +448,8 @@ export class AnthropicAdapter implements ProviderAdapter {
       messages: [{ role: 'user', content: input.prompt }],
     }
 
-    // 标题生成不需要思考：按模型能力选择禁用方式
-    // - Mythos Preview 不接受 disabled，省略字段即可
-    // - 其它 Claude 显式 disabled（对 manual / adaptive 模型都有效）
-    if (capability.disableStrategy === 'explicit-disabled') {
-      body.thinking = { type: 'disabled' }
-    }
+    // 标题生成强制禁用 thinking，避免模型输出思维链污染标题文本
+    body.thinking = { type: 'disabled' }
 
     return {
       url,

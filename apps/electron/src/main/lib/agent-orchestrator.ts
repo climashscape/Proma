@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, ProviderType } from '@proma/shared'
+import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, RegenerateTitleResult, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, ProviderType } from '@proma/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -41,7 +41,7 @@ import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk, getPromaUserAg
 import pkg from '../../../package.json' with { type: 'json' }
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
-import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot } from './agent-session-manager'
+import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot } from './agent-session-manager'
 import { getAgentWorkspace, getWorkspaceMcpConfig, ensurePluginManifest, getWorkspaceAutoMemoryDir, getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getBundledCliPath } from './config-paths'
 import { getRuntimeStatus } from './runtime-init'
@@ -73,7 +73,7 @@ export interface SessionCallbacks {
   /** 发送流式完成（携带已持久化的消息列表） */
   onComplete: (messages?: AgentMessage[], opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean }) => void
   /** 发送标题更新 */
-  onTitleUpdated: (title: string) => void
+  onTitleUpdated: (title: string, isAuto?: boolean) => void
   /** 用户消息已持久化，外部入口可据此通知前端切到实时会话 */
   onRunStarted?: (opts: { startedAt: number }) => void
 }
@@ -295,8 +295,182 @@ const MAX_TITLE_LENGTH = 20
 /** 默认会话标题（用于判断是否需要自动生成） */
 const DEFAULT_SESSION_TITLE = '新 Agent 会话'
 
+/** 渐进式标题更新：漂移检测取最近 N 条 user/assistant 文本消息做摘要 */
+const DRIFT_MESSAGE_COUNT = 12
+
+/** 渐进式标题更新：距上次生成标题的轮次间隔（基于真实会话轮次分布校准，N=5 覆盖 64% 会话） */
+const DRIFT_INTERVAL_TURNS = 5
+
+/** 渐进式标题更新：每条消息摘要截断长度 */
+const DRIFT_MESSAGE_EXCERPT_LEN = 400
+
+/** 渐进式标题更新：漂移检测 Prompt */
+const DRIFT_TITLE_PROMPT = '标题「{currentTitle}」\n\n最近对话：\n{digest}\n\n若主题已变，给一个新标题（≤10字）。若未变，复制原标题。只输出标题本身。'
+
+/** 渐进式标题更新：手动重生成 Prompt（强制生成新标题，不回退原标题） */
+const REGENERATE_TITLE_PROMPT = '为以下对话起一个简短标题（≤10字），只输出标题本身。\n\n{digest}'
+
+/** 渐进式标题更新：极简重试 Prompt（sanitize 失败时用，无否定指令防学舌） */
+const FALLBACK_TITLE_PROMPT = '为以下对话生成一个简短标题\n{digest}'
+
 /** 默认模型 ID */
 const DEFAULT_MODEL_ID = 'claude-sonnet-5'
+
+/**
+ * 渐进式标题更新：判断 SDK user 消息是否含 text 块（即真实用户输入，非 tool_result 续接）
+ */
+function isUserTextMessage(m: SDKMessage): boolean {
+  if (m.type !== 'user') return false
+  const content = (m as unknown as { message?: { content?: unknown } }).message?.content
+  if (Array.isArray(content)) {
+    return content.some((b) => typeof b === 'object' && b !== null && (b as { type: string }).type === 'text')
+  }
+  return typeof content === 'string'
+}
+
+/**
+ * 渐进式标题更新：从 SDK 消息列表中提取纯文本消息（user 文本 / assistant 含文本），
+ * 跳过 tool_result / tool_use / 系统消息 / 空文本 assistant 消息，与实时流过滤逻辑保持一致。
+ */
+function extractTextMessages(messages: SDKMessage[]): SDKMessage[] {
+  return messages.filter((m) => {
+    if (m.type === 'user') return isUserTextMessage(m)
+    if (m.type === 'assistant') return extractMessageText(m).length > 0
+    return false
+  })
+}
+
+/**
+ * 渐进式标题更新：统计用户轮次（user 文本消息数，与首条标题生成口径一致）
+ */
+function countUserTurns(messages: SDKMessage[]): number {
+  return messages.filter(isUserTextMessage).length
+}
+
+/**
+ * 渐进式标题更新：取最近 N 条 user/assistant 文本消息（正序）
+ */
+function pickRecentTextMessages(messages: SDKMessage[], n: number): SDKMessage[] {
+  const textMsgs = extractTextMessages(messages)
+  return textMsgs.slice(-n)
+}
+
+/**
+ * 渐进式标题更新：把最近消息拼成摘要文本（每条截断到 DRIFT_MESSAGE_EXCERPT_LEN 字）
+ */
+function buildRecentMessagesDigest(messages: SDKMessage[]): string {
+  return messages.map((m) => {
+    const role = m.type === 'user' ? '用户' : '助手'
+    const text = extractMessageText(m)
+    const excerpt = text.length > DRIFT_MESSAGE_EXCERPT_LEN
+      ? text.slice(0, DRIFT_MESSAGE_EXCERPT_LEN) + '…'
+      : text
+    return `- ${role}：${excerpt}`
+  }).join('\n')
+}
+
+/**
+ * 渐进式标题更新：从 SDK 消息中提取纯文本内容
+ */
+function extractMessageText(message: SDKMessage): string {
+  const content = (message as unknown as { message?: { content?: unknown } }).message?.content
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter((b): b is { type: 'text'; text: string } =>
+        typeof b === 'object' && b !== null && (b as { type: string }).type === 'text' && typeof (b as { text?: unknown }).text === 'string')
+      .map((b) => b.text)
+      .join('')
+  }
+  return ''
+}
+
+/**
+ * 渐进式标题更新：归一化标题用于漂移判定
+ *
+ * 模型输出常有空格/全半角/标点细微差异，严格 === 会把「未漂移」误判为漂移。
+ * 归一化：trim + 折叠连续空白 + 全角转半角（字母数字），然后比较。
+ */
+function normalizeTitle(title: string): string {
+  return title
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/　/g, ' ')                          // 全角空格 → 半角
+    .replace(/[，、。！？；：""''「」『』《》（）【】]/g, '')  // 全角标点 → 空
+    .replace(/[.,!?;:()"'\-_]/g, '')                   // 半角标点 → 空
+    .trim()
+}
+
+/**
+ * 渐进式标题更新：清洗模型输出，滤除 prompt 指令回显
+ *
+ * 弱模型可能把 prompt 中的指令文字鹦鹉学舌回来。此函数检测并过滤这些碎片，
+ * 返回真正的标题文本。若整个输出都是指令碎片则返回 null。
+ */
+function sanitizeTitleOutput(raw: string): string | null {
+  // 1. 基础清理
+  let cleaned = raw.trim().replace(/^["'""''「《]+|["'""''」》]+$/g, '').trim()
+
+  // 2. 滤除常见 prompt 指令碎片（弱模型鹦鹉学舌）
+  const instructionFragments = [
+    '只输出标题', '不要有任何其他', '标点符号', '不要输出任何', '输出标题本身',
+    '以下对话', '对话摘要', '最近对话', '当前会话标题',
+    '请基于此', '请判断', '若已偏离', '若未偏离', '复制原标题',
+    '请生成', '起一个', '为主题起', '请为主题',
+  ]
+  for (const frag of instructionFragments) {
+    if (cleaned.includes(frag)) {
+      // 尝试从输出中提取可能被夹杂的真实标题
+      // 策略：移除指令行，取第一行纯文本
+      const lines = cleaned.split(/[\n\r]+/).map((l) => l.trim()).filter((l) => l.length > 0)
+      for (const line of lines) {
+        const isInstruction = instructionFragments.some((f) => line.includes(f))
+        if (!isInstruction && line.length <= MAX_TITLE_LENGTH * 2) {
+          cleaned = line
+          break
+        }
+      }
+      // 若所有行都含指令碎片，放弃
+      if (instructionFragments.some((f) => cleaned.includes(f))) {
+        return null
+      }
+    }
+  }
+
+  // 3. 超长标题大概率是模型胡言乱语
+  if (cleaned.length > MAX_TITLE_LENGTH * 2) return null
+
+  // 4. 截断到允许长度
+  return cleaned.slice(0, MAX_TITLE_LENGTH) || null
+}
+
+/**
+ * 渐进式标题更新：判断候选标题与当前标题是否等价（未漂移）
+ */
+function isSameTitle(a: string, b: string): boolean {
+  return normalizeTitle(a) === normalizeTitle(b)
+}
+
+/**
+ * 渐进式标题更新：解析漂移检测/手动重生成所用模型
+ *
+ * 优先用设置中配置的 titleModelChannelId/titleModelId，未配置则回退到当前会话的 channelId/modelId。
+ */
+function resolveTitleModel(
+  meta: AgentSessionMeta,
+  settings: { titleModelChannelId?: string; titleModelId?: string },
+): { channelId: string; modelId: string } {
+  const settingsChannel = settings.titleModelChannelId
+  const settingsModel = settings.titleModelId
+  if (settingsChannel && settingsModel) {
+    return { channelId: settingsChannel, modelId: settingsModel }
+  }
+  return {
+    channelId: meta.channelId ?? '',
+    modelId: meta.modelId ?? '',
+  }
+}
 
 /**
  * 聚合一次 SDK 调用涉及的所有附加目录（去重，保持插入顺序）。
@@ -544,44 +718,119 @@ export class AgentOrchestrator {
    *
    * 使用 Provider 适配器系统，支持所有渠道。任何错误返回 null。
    */
+  /**
+   * 生成 Agent 会话标题
+   *
+   * 使用 Provider 适配器系统，支持所有渠道。任何错误返回 null。
+   *
+   * 两种模式：
+   * - 首条生成：传 `userMessage`，用 `TITLE_PROMPT`
+   * - 漂移检测/手动重生成：传 `messages` + `currentTitle`，用 `DRIFT_TITLE_PROMPT`，
+   *   模型返回与 `currentTitle` 相同则视为未漂移（调用方比对决定是否写回）
+   */
   async generateTitle(input: AgentGenerateTitleInput): Promise<string | null> {
-    const { userMessage, channelId, modelId } = input
-    console.log('[Agent 标题生成] 开始生成标题:', { channelId, modelId, userMessage: userMessage.slice(0, 50) })
+    const { userMessage, messages, currentTitle, channelId, modelId, isManualRegen } = input
 
-    try {
-      const channels = listChannels()
-      const channel = channels.find((c) => c.id === channelId)
-      if (!channel) {
-        console.warn('[Agent 标题生成] 渠道不存在:', channelId)
+    // 漂移检测/手动重生成分支
+    if (messages && messages.length > 0) {
+      const digest = buildRecentMessagesDigest(messages)
+      // 手动重生成用强制生成 prompt（总是给新标题），自动漂移检测用对比 prompt
+      const prompt = isManualRegen
+        ? REGENERATE_TITLE_PROMPT.split('{digest}').join(digest)
+        : DRIFT_TITLE_PROMPT
+            .split('{currentTitle}').join(currentTitle ?? DEFAULT_SESSION_TITLE)
+            .split('{digest}').join(digest)
+      const modeLabel = isManualRegen ? '手动重生成' : '漂移检测'
+      console.log(`[Agent 标题${modeLabel}] 开始:`, { channelId, modelId, currentTitle, messageCount: messages.length })
+      try {
+        const title = await this.requestTitle(channelId, modelId, prompt)
+        if (!title) {
+          console.warn(`[Agent 标题${modeLabel}] API 返回空标题`)
+          return null
+        }
+        let result = sanitizeTitleOutput(title)
+        // 静默重试：sanitize 返回 null 时，用极简 prompt 重拉一次（弱模型学舌概率低）
+        if (!result) {
+          const fallbackPrompt = FALLBACK_TITLE_PROMPT.split('{digest}').join(digest)
+          console.log(`[Agent 标题${modeLabel}] sanitize 返回 null，静默重试极简 prompt`)
+          const retry = await this.requestTitle(channelId, modelId, fallbackPrompt)
+          if (!retry) {
+            console.warn(`[Agent 标题${modeLabel}] 静默重试 API 返回空`)
+            return null
+          }
+          result = sanitizeTitleOutput(retry)
+          if (!result) {
+            console.warn(`[Agent 标题${modeLabel}] 两次尝试均 sanitize 失败`)
+            return null
+          }
+          console.log(`[Agent 标题${modeLabel}] 静默重试成功: "${result}"`)
+        }
+        console.log(`[Agent 标题${modeLabel}] 候选标题: "${result}"`)
+        return result
+      } catch (error) {
+        console.warn(`[Agent 标题${modeLabel}] 生成失败:`, error)
         return null
       }
+    }
 
-      const apiKey = decryptApiKey(channelId)
-      const providerAdapter = getAdapter(channel.provider)
-      const request = providerAdapter.buildTitleRequest({
-        baseUrl: channel.baseUrl,
-        apiKey,
-        modelId,
-        prompt: TITLE_PROMPT + userMessage,
-      })
-
-      const proxyUrl = await getEffectiveProxyUrl()
-      const fetchFn = getFetchFn(proxyUrl)
-      const title = await fetchTitle(request, providerAdapter, fetchFn)
+    // 首条生成分支（原逻辑）
+    const msg = userMessage ?? ''
+    console.log('[Agent 标题生成] 开始生成标题:', { channelId, modelId, userMessage: msg.slice(0, 50) })
+    try {
+      const title = await this.requestTitle(channelId, modelId, TITLE_PROMPT + msg)
       if (!title) {
         console.warn('[Agent 标题生成] API 返回空标题')
         return null
       }
-
-      const cleaned = title.trim().replace(/^["'""''「《]+|["'""''」》]+$/g, '').trim()
-      const result = cleaned.slice(0, MAX_TITLE_LENGTH) || null
-
+      let result = sanitizeTitleOutput(title)
+      if (!result) {
+        const fallbackPrompt = FALLBACK_TITLE_PROMPT.split('{digest}').join(msg.slice(0, DRIFT_MESSAGE_EXCERPT_LEN))
+        console.log('[Agent 标题生成] sanitize 返回 null，静默重试极简 prompt')
+        const retry = await this.requestTitle(channelId, modelId, fallbackPrompt)
+        if (!retry) {
+          console.warn('[Agent 标题生成] 静默重试 API 返回空')
+          return null
+        }
+        result = sanitizeTitleOutput(retry)
+        if (!result) {
+          console.warn('[Agent 标题生成] 两次尝试均 sanitize 失败')
+          return null
+        }
+        console.log(`[Agent 标题生成] 静默重试成功: "${result}"`)
+      }
       console.log(`[Agent 标题生成] 生成标题成功: "${result}"`)
       return result
     } catch (error) {
       console.warn('[Agent 标题生成] 生成失败:', error)
       return null
     }
+  }
+
+  /**
+   * 调用渠道 adapter 构建并发送标题生成请求，返回模型输出的标题文本
+   *
+   * `generateTitle` 的内部共用方法，封装渠道查找 + API Key 解密 + 代理 + fetchTitle。
+   */
+  private async requestTitle(channelId: string, modelId: string, prompt: string): Promise<string | null> {
+    const channels = listChannels()
+    const channel = channels.find((c) => c.id === channelId)
+    if (!channel) {
+      console.warn('[Agent 标题生成] 渠道不存在:', channelId)
+      return null
+    }
+
+    const apiKey = decryptApiKey(channelId)
+    const providerAdapter = getAdapter(channel.provider)
+    const request = providerAdapter.buildTitleRequest({
+      baseUrl: channel.baseUrl,
+      apiKey,
+      modelId,
+      prompt,
+    })
+
+    const proxyUrl = await getEffectiveProxyUrl()
+    const fetchFn = getFetchFn(proxyUrl)
+    return fetchTitle(request, providerAdapter, fetchFn)
   }
 
   /**
@@ -600,14 +849,204 @@ export class AgentOrchestrator {
       const meta = getAgentSessionMeta(sessionId)
       if (!meta || meta.title !== DEFAULT_SESSION_TITLE) return
 
-      const title = await this.generateTitle({ userMessage, channelId, modelId })
+      // 首条标题也用 resolveTitleModel 统一模型解析路径，与后续漂移检测一致：
+      // 用户在设置中配了标题专用模型 → 首条就用，否则回退到会话模型
+      const settings = getSettings()
+      const { channelId: titleChannelId, modelId: titleModelId } = resolveTitleModel(meta, settings)
+      const effectiveChannelId = titleChannelId || channelId
+      const effectiveModelId = titleModelId || modelId
+
+      const title = await this.generateTitle({
+        userMessage,
+        channelId: effectiveChannelId,
+        modelId: effectiveModelId,
+      })
       if (!title) return
 
-      updateAgentSessionMeta(sessionId, { title })
+      // CAS：生成期间 maybeRefreshTitle 可能已完成并写入标题（首条消息较长 + 工具调用多轮）。
+      // 若标题已非默认值，放弃覆盖，避免竞态下 autoGenerateTitle 的过时结果盖掉漂移检测结果。
+      const latestMeta = getAgentSessionMeta(sessionId)
+      if (!latestMeta || latestMeta.title !== DEFAULT_SESSION_TITLE) return
+
+      // 记录当前实际用户轮次，而非硬编码 1（首条消息后可能已累积多轮 SDK 往返）
+      const turns = countUserTurns(getAgentSessionSDKMessages(sessionId))
+      updateAgentSessionMeta(sessionId, { title, lastTitleTurn: Math.max(turns, 1) })
       callbacks.onTitleUpdated(title)
       console.log(`[Agent 编排] 自动标题生成完成: "${title}"`)
     } catch (error) {
       console.warn('[Agent 编排] 自动标题生成失败:', error)
+    }
+  }
+
+  /**
+   * 渐进式标题更新：流成功完成后检测话题是否漂移，漂移则重新生成标题
+   *
+   * 三道闸门（顺序）：
+   * 1. 会话类型：仅普通主会话参与，排除一切子会话/定时会话
+   * 2. 设置开关：progressiveTitleUpdateEnabled
+   * 3. 节流：距上次标题生成（lastTitleTurn）≥ DRIFT_INTERVAL_TURNS
+   *
+   * 通过「候选标题 vs 当前标题不同 = 漂移」判定，相同则不写回（锚点稳住）。
+   * 失败静默，不影响主流程。
+   */
+  private async maybeRefreshTitle(
+    sessionId: string,
+    callbacks: SessionCallbacks,
+  ): Promise<void> {
+    try {
+      const meta = getAgentSessionMeta(sessionId)
+      if (!meta) return
+
+      // 闸门 1：仅普通主会话（排除协作子会话/定时会话，不论毕业与否）
+      if (meta.parentSessionId || meta.sourceDelegationId || meta.delegationDepth || meta.sourceAutomationId) {
+        return
+      }
+
+      // 闸门 2：设置开关
+      const settings = getSettings()
+      if (settings.progressiveTitleUpdateEnabled === false) return
+
+      // 闸门 2.5：用户手动编辑标题后跳过自动漂移（尊重用户意图，不被覆盖）。
+      // 手动编辑会置 titleManualOverride=true，直到用户手动重生成后清除。
+      if (meta.titleManualOverride) {
+        console.log('[Agent 标题漂移检测] 用户已手动编辑标题，跳过自动更新')
+        // 仍推进节流轮次，避免每轮都进来检查 manualOverride
+        const currentTurns = countUserTurns(getAgentSessionSDKMessages(sessionId))
+        if (meta.lastTitleTurn !== undefined) {
+          updateAgentSessionMeta(sessionId, { lastTitleTurn: currentTurns })
+        }
+        return
+      }
+
+      // 闸门 3：节流
+      // 老会话升级（lastTitleTurn 未初始化）：写入当前轮次后跳过本轮检测，
+      // 避免大轮次差（undefined→0→穿透节流）导致无意义的 LLM 调用。
+      const messages = getAgentSessionSDKMessages(sessionId)
+      const currentTurns = countUserTurns(messages)
+      if (meta.lastTitleTurn === undefined) {
+        updateAgentSessionMeta(sessionId, { lastTitleTurn: currentTurns })
+        return
+      }
+      const lastTurn = meta.lastTitleTurn
+      if (currentTurns - lastTurn < DRIFT_INTERVAL_TURNS) return
+
+      // 取最近 K 条消息摘要
+      const recent = pickRecentTextMessages(messages, DRIFT_MESSAGE_COUNT)
+      if (recent.length === 0) return
+
+      // 解析漂移检测所用模型（设置优先，回退会话模型）
+      const { channelId, modelId } = resolveTitleModel(meta, settings)
+      if (!channelId || !modelId) return
+
+      // 透传守卫：maybeRefreshTitle 被 completeRun 同步调用时 active slot 已释放，
+      // 本守卫不会触发；仅防御 future refactor 中 completeRun 改为异步调用后
+      // 与用户秒发的下一条消息并发——届时让新一轮完成后再判断。
+      const runGeneration = this.activeSessions.get(sessionId)
+      if (runGeneration !== undefined) return
+
+      const currentTitle = meta.title ?? DEFAULT_SESSION_TITLE
+      const candidate = await this.generateTitle({
+        messages: recent,
+        currentTitle,
+        channelId,
+        modelId,
+      })
+      if (!candidate) return
+
+      // CAS 校验：await generateTitle 期间用户可能已进入新一轮并推进 lastTitleTurn。
+      // 重新读取最新 meta，若 lastTitleTurn 已变化则放弃写回，交给新一轮完成后重新判断。
+      const latestMeta = getAgentSessionMeta(sessionId)
+      if (!latestMeta || (latestMeta.lastTitleTurn ?? 0) !== lastTurn) {
+        console.log('[Agent 标题漂移检测] 检测期间会话已进入新一轮，放弃写回')
+        return
+      }
+
+      // 与当前标题相同/等价则视为未漂移。仍推进 lastTitleTurn 到当前轮次，
+      // 否则节流闸门失效——每轮 currentTurns - lastTurn 都会 ≥ 阈值，退化成每轮都调 LLM。
+      if (isSameTitle(candidate, currentTitle) || candidate === DEFAULT_SESSION_TITLE) {
+        console.log(`[Agent 标题漂移检测] 未漂移，保持标题: "${currentTitle}"`)
+        updateAgentSessionMeta(sessionId, { lastTitleTurn: currentTurns })
+        return
+      }
+
+      updateAgentSessionMeta(sessionId, { title: candidate, lastTitleTurn: currentTurns })
+      callbacks.onTitleUpdated(candidate, true)
+      console.log(`[Agent 标题漂移检测] 话题漂移，标题更新: "${currentTitle}" → "${candidate}"`)
+    } catch (error) {
+      console.warn('[Agent 编排] 渐进式标题更新失败:', error)
+    }
+  }
+
+  /**
+   * 手动重新生成会话标题（用户从 AgentHeader 触发）
+   *
+   * 与 `maybeRefreshTitle` 的区别：
+   * - 跳过节流闸门（用户主动操作不受轮次限制）
+   * - 使用专用 prompt（REGENERATE_TITLE_PROMPT），不强求「未偏离则输出原标题」，
+   *   确保用户每次手动操作都能得到新鲜标题
+   * - 清除 titleManualOverride 标记，恢复自动漂移检测
+   *
+   * @returns 结构化结果，区分「未调 LLM 因故放弃」与「调了 LLM 但未漂移」
+   */
+  async regenerateTitle(sessionId: string): Promise<RegenerateTitleResult> {
+    try {
+      const meta = getAgentSessionMeta(sessionId)
+      if (!meta) {
+        console.warn('[Agent 标题手动重生成] meta 不存在:', sessionId)
+        return { ok: false, reason: 'error' }
+      }
+
+      // 仅普通主会话（排除协作子会话/定时会话，不论毕业与否）
+      if (meta.parentSessionId || meta.sourceDelegationId || meta.delegationDepth || meta.sourceAutomationId) {
+        return { ok: false, reason: 'not-main-session' }
+      }
+
+      const messages = getAgentSessionSDKMessages(sessionId)
+      const recent = pickRecentTextMessages(messages, DRIFT_MESSAGE_COUNT)
+      if (recent.length === 0) return { ok: false, reason: 'no-messages' }
+
+      const settings = getSettings()
+      const { channelId, modelId } = resolveTitleModel(meta, settings)
+      if (!channelId || !modelId) return { ok: false, reason: 'no-model' }
+
+      // CAS：保存当前 lastTitleTurn，写入前校验是否被并发 maybeRefreshTitle 推进
+      const lastTurn = meta.lastTitleTurn
+
+      const currentTitle = meta.title ?? DEFAULT_SESSION_TITLE
+      const candidate = await this.generateTitle({
+        messages: recent,
+        currentTitle,
+        channelId,
+        modelId,
+        isManualRegen: true,  // 使用强制生成 prompt，总是返回新标题
+      })
+      if (!candidate) {
+        console.log(`[Agent 标题手动重生成] generateTitle 返回 null，调用失败`)
+        return { ok: false, reason: 'error' }
+      }
+
+      // 手动重生成不检查 isSameTitle——用户主动操作期待新标题，即使是同一主题的不同表述也好。
+      // 唯一拒绝：候选为空字符串或仍为默认标题
+      if (!candidate || candidate === DEFAULT_SESSION_TITLE) {
+        console.log(`[Agent 标题手动重生成] 候选无效，保持标题: "${currentTitle}"`)
+        return { ok: false, reason: 'same' }
+      }
+
+      // CAS 校验：await generateTitle 期间 maybeRefreshTitle 可能已完成并推进 lastTitleTurn
+      const latestMeta = getAgentSessionMeta(sessionId)
+      if (!latestMeta || (latestMeta.lastTitleTurn ?? 0) !== (lastTurn ?? 0)) {
+        console.log('[Agent 标题手动重生成] 检测期间自动漂移更新已推进标题，放弃写回')
+        return { ok: false, reason: 'stale' }
+      }
+
+      const currentTurns = countUserTurns(messages)
+      // 清除 titleManualOverride：用户主动重生成表示接受 AI 管理标题
+      updateAgentSessionMeta(sessionId, { title: candidate, lastTitleTurn: currentTurns, titleManualOverride: false })
+      console.log(`[Agent 标题手动重生成] 标题更新: "${currentTitle}" → "${candidate}"`)
+      return { ok: true, title: candidate }
+    } catch (error) {
+      console.warn('[Agent 编排] 手动重生成标题失败:', error)
+      return { ok: false, reason: 'error' }
     }
   }
 
@@ -824,6 +1263,19 @@ export class AgentOrchestrator {
     // 0.5 清除上一轮中断标记
     try { updateAgentSessionMeta(sessionId, { stoppedByUser: false }) } catch { /* 会话可能已删除 */ }
 
+    // 0.6 持久化本次运行所用渠道/模型到 meta
+    // 用途：标题漂移检测/手动重生成回退解析模型（resolveTitleModel），老会话首次发消息后即补齐。
+    // modelId 回退到 DEFAULT_MODEL_ID，与 SDK 实际运行模型（line 1235 resolvedModel）保持一致，
+    // 避免调用方未传 modelId 时 meta 仍空、resolveTitleModel 落到 'no-model'。
+    if (channelId) {
+      try {
+        updateAgentSessionMeta(sessionId, {
+          channelId,
+          modelId: modelId || DEFAULT_MODEL_ID,
+        })
+      } catch { /* 会话可能已删除 */ }
+    }
+
     // 环境 / 配置类错误的统一上报：持久化为 TypedError 消息，由 SDKMessageRenderer 渲染
     const reportPreflightError = (typedError: TypedError) => {
       const errorContent = typedError.title
@@ -922,10 +1374,15 @@ export class AgentOrchestrator {
     }
     const completeRun = (
       messages?: AgentMessage[],
-      opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[] },
+      opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; terminatedWithError?: boolean },
     ): void => {
       releaseActiveRun()
       callbacks.onComplete(messages, opts)
+      // 渐进式标题更新：仅成功完成（非用户中断、非错误终止）时触发，fire-and-forget
+      if (!opts?.stoppedByUser && !opts?.terminatedWithError) {
+        this.maybeRefreshTitle(sessionId, callbacks)
+          .catch((err) => console.error('[Agent 编排] 渐进式标题更新未捕获异常:', err))
+      }
     }
     // 轻量完成：turn 主体结束但仍有后台任务在飞行。
     // 关键区别——不调用 releaseActiveRun，保留 activeSessions/activeChannels/sessionPermissionModes，
@@ -1789,7 +2246,7 @@ export class AgentOrchestrator {
                 // 透传归一化后的错误消息到前端，避免 SDK 原始 API Error 直接暴露给用户。
                 this.eventBus.emit(sessionId, { kind: 'sdk_message', message: errorSDKMsg })
                 try { updateAgentSessionMeta(sessionId, {}) } catch { /* 忽略 */ }
-                completeRun(getAgentSessionMessages(sessionId), { startedAt: streamStartedAt })
+                completeRun(getAgentSessionMessages(sessionId), { startedAt: streamStartedAt, terminatedWithError: true })
                 return
               }
             }

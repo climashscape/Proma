@@ -27,6 +27,7 @@ export function getSettings(): AppSettings {
       notificationsEnabled: true,
       longTextPasteAsAttachmentEnabled: false,
       richTextRenderingEnabled: false,
+      progressiveTitleUpdateEnabled: true,
       feishuSessionMirror: { mode: 'off' },
       builtinMcpDisabledIds: [],
     }
@@ -44,6 +45,7 @@ export function getSettings(): AppSettings {
       notificationsEnabled: data.notificationsEnabled ?? true,
       longTextPasteAsAttachmentEnabled: data.longTextPasteAsAttachmentEnabled ?? false,
       richTextRenderingEnabled: data.richTextRenderingEnabled ?? false,
+      progressiveTitleUpdateEnabled: data.progressiveTitleUpdateEnabled ?? true,
       feishuSessionMirror: data.feishuSessionMirror ?? { mode: 'off' },
       builtinMcpDisabledIds: data.builtinMcpDisabledIds ?? [],
     }
@@ -57,6 +59,7 @@ export function getSettings(): AppSettings {
       notificationsEnabled: true,
       longTextPasteAsAttachmentEnabled: false,
       richTextRenderingEnabled: false,
+      progressiveTitleUpdateEnabled: true,
       feishuSessionMirror: { mode: 'off' },
       builtinMcpDisabledIds: [],
     }

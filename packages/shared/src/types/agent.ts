@@ -612,6 +612,10 @@ export interface AgentSessionMeta {
   delegationDepth?: number
   /** 委派目标摘要，便于 UI 展示和追溯 */
   delegationGoal?: string
+  /** 渐进式标题更新：上次（自动或手动）生成标题时的累计用户轮次，用于节流判定 */
+  lastTitleTurn?: number
+  /** 渐进式标题更新：用户手动编辑标题后置 true，自动漂移检测跳过（尊重用户意图，不被覆盖） */
+  titleManualOverride?: boolean
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -718,12 +722,39 @@ export interface AgentSessionReferenceSearchResult {
 
 /** Agent 标题生成输入 */
 export interface AgentGenerateTitleInput {
-  /** 用户第一条消息内容 */
-  userMessage: string
+  /** 用户第一条消息内容（首条标题生成时使用） */
+  userMessage?: string
+  /** 渐进式标题更新/手动重生成时，传入最近若干条 SDK 消息，与 userMessage 二选一 */
+  messages?: SDKMessage[]
+  /** 当前标题（漂移检测时用于比对，模型返回与当前相同则视为未漂移） */
+  currentTitle?: string
+  /** 手动重生成模式：使用不同 prompt（总是生成新标题），跳过他 same-title 比较 */
+  isManualRegen?: boolean
   /** 渠道 ID（用于获取 API Key） */
   channelId: string
   /** 模型 ID */
   modelId: string
+}
+
+/**
+ * 手动重生成标题的结果
+ *
+ * 区分「没调 LLM 因故放弃」与「调了 LLM 但未漂移」两种 null 语义，
+ * 让前端能给出准确提示，避免把"未配置模型"误报成"主题未偏离"。
+ */
+export interface RegenerateTitleResult {
+  /** 是否成功生成并写回新标题 */
+  ok: boolean
+  /** 失败/未漂移原因；ok=true 时为 undefined */
+  reason?:
+    | 'not-main-session' // 子会话/定时会话，不参与手动重生成
+    | 'no-messages'      // 取不到最近文本消息
+    | 'no-model'         // 解析不到渠道/模型（设置未配 + meta 空）
+    | 'same'             // 调了 LLM，返回无效标题（空或默认标题）
+    | 'stale'            // CAS 校验失败：并发自动漂移检测已推进标题
+    | 'error'            // 调用异常
+  /** 新标题；仅 ok=true 时有值 */
+  title?: string
 }
 
 // ===== MCP 服务器配置 =====
@@ -1400,6 +1431,8 @@ export const AGENT_IPC_CHANNELS = {
   // 标题生成
   /** 生成 Agent 会话标题 */
   GENERATE_TITLE: 'agent:generate-title',
+  /** 手动重新生成 Agent 会话标题（基于最近消息摘要，触发漂移检测逻辑） */
+  REGENERATE_TITLE: 'agent:regenerate-title',
 
   // 消息发送
   /** 发送消息（触发 Agent 流式响应） */

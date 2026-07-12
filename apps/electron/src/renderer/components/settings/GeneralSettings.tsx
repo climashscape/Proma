@@ -15,6 +15,7 @@ import {
   SettingsCard,
   SettingsRow,
   SettingsToggle,
+  SettingsSegmentedControl,
 } from './primitives'
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover'
 import {
@@ -41,12 +42,18 @@ import {
   longTextPasteAsAttachmentEnabledAtom,
   richTextRenderingEnabledAtom,
   stickyUserMessageEnabledAtom,
+  progressiveTitleUpdateEnabledAtom,
+  titleModelChannelIdAtom,
+  titleModelIdAtom,
   updateLongTextPasteAsAttachmentEnabled,
   updateRichTextRenderingEnabled,
   updateStickyUserMessageEnabled,
+  updateProgressiveTitleUpdateEnabled,
+  updateTitleModel,
 } from '@/atoms/ui-preferences'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/button'
+import { ModelSelector } from '../chat/ModelSelector'
 import type { NotificationSoundId, NotificationSoundType, NotificationSoundSettings } from '@/types/settings'
 
 /** emoji-mart 选择回调的 emoji 对象类型 */
@@ -67,6 +74,9 @@ export function GeneralSettings(): React.ReactElement {
   const [stickyUserMessageEnabled, setStickyUserMessageEnabled] = useAtom(stickyUserMessageEnabledAtom)
   const [longTextPasteAsAttachmentEnabled, setLongTextPasteAsAttachmentEnabled] = useAtom(longTextPasteAsAttachmentEnabledAtom)
   const [richTextRenderingEnabled, setRichTextRenderingEnabled] = useAtom(richTextRenderingEnabledAtom)
+  const [progressiveTitleUpdateEnabled, setProgressiveTitleUpdateEnabled] = useAtom(progressiveTitleUpdateEnabledAtom)
+  const [titleModelChannelId, setTitleModelChannelId] = useAtom(titleModelChannelIdAtom)
+  const [titleModelId, setTitleModelId] = useAtom(titleModelIdAtom)
   const [isEditingName, setIsEditingName] = React.useState(false)
   const [nameInput, setNameInput] = React.useState(userProfile.userName)
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false)
@@ -343,6 +353,50 @@ export function GeneralSettings(): React.ReactElement {
               updateRichTextRenderingEnabled(checked)
             }}
           />
+          <SettingsSegmentedControl
+            label="会话标题更新"
+            description="自动：话题显著偏移时自动重新生成；仅手动：仅在点击 ✨ 按钮时生成"
+            options={[
+              { label: '渐进+手动', value: 'true' },
+              { label: '仅手动', value: 'false' },
+            ]}
+            value={progressiveTitleUpdateEnabled ? 'true' : 'false'}
+            onValueChange={(value) => {
+              const enabled = value === 'true'
+              setProgressiveTitleUpdateEnabled(enabled)
+              updateProgressiveTitleUpdateEnabled(enabled)
+            }}
+          />
+          <SettingsRow label="标题更新所用模型" description="漂移检测与手动重新生成所用模型，留空则跟随当前会话模型">
+            <div className="flex items-center gap-2">
+              <ModelSelector
+                externalSelectedModel={
+                  titleModelChannelId && titleModelId
+                    ? { channelId: titleModelChannelId, modelId: titleModelId }
+                    : null
+                }
+                onModelSelect={(option) => {
+                  setTitleModelChannelId(option.channelId)
+                  setTitleModelId(option.modelId)
+                  updateTitleModel(option.channelId, option.modelId)
+                }}
+                showChannelInTrigger
+              />
+              {titleModelChannelId && titleModelId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setTitleModelChannelId('')
+                    setTitleModelId('')
+                    updateTitleModel('', '')
+                  }}
+                >
+                  清除
+                </Button>
+              )}
+            </div>
+          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
     </div>

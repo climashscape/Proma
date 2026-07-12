@@ -186,7 +186,7 @@ import {
   searchAgentSessionMessages,
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
-import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession } from './lib/agent-service'
+import { runAgent, stopAgent, generateAgentTitle, regenerateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession } from './lib/agent-service'
 import { permissionService } from './lib/agent-permission-service'
 import { askUserService } from './lib/agent-ask-user-service'
 import { exitPlanService } from './lib/agent-exit-plan-service'
@@ -1777,7 +1777,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.UPDATE_TITLE,
     async (_, id: string, title: string): Promise<AgentSessionMeta> => {
-      return updateAgentSessionMeta(id, { title })
+      return updateAgentSessionMeta(id, { title, titleManualOverride: true })
     }
   )
 
@@ -1786,6 +1786,24 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.GENERATE_TITLE,
     async (_, input: AgentGenerateTitleInput): Promise<string | null> => {
       return generateAgentTitle(input)
+    }
+  )
+
+  // 手动重新生成 Agent 会话标题（基于最近消息摘要，跳过节流）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.REGENERATE_TITLE,
+    async (event, id: string): Promise<import('@proma/shared').RegenerateTitleResult> => {
+      const result = await regenerateAgentTitle(id)
+      if (result.ok && result.title) {
+        // 广播 TITLE_UPDATED 到所有窗口（与 agent-service 的 onTitleUpdated 行为一致），
+        // 避免多窗口场景下仅请求窗口收到标题更新
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send(AGENT_IPC_CHANNELS.TITLE_UPDATED, { sessionId: id, title: result.title })
+          }
+        }
+      }
+      return result
     }
   )
 

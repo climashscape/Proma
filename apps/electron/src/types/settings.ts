@@ -240,6 +240,12 @@ export interface AppSettings {
   longTextPasteAsAttachmentEnabled?: boolean
   /** 输入框是否渲染 Markdown 富文本格式（默认 false，关闭后为纯文本模式，仍保留 Mention 引用） */
   richTextRenderingEnabled?: boolean
+  /** 渐进式更新会话标题：话题偏移时自动重新生成（默认 true，仅普通主会话生效） */
+  progressiveTitleUpdateEnabled?: boolean
+  /** 渐进式标题更新/手动重生成所用模型的渠道 ID（未设置则跟随当前会话渠道） */
+  titleModelChannelId?: string
+  /** 渐进式标题更新/手动重生成所用模型 ID（未设置则跟随当前会话模型） */
+  titleModelId?: string
   /** Markdown 预览字号档位（默认 'medium'，对应 15px） */
   markdownFontSize?: MarkdownFontSize
   /** 上次是否在 Scratch Pad 页（用于重启恢复） */

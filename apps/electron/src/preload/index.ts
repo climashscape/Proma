@@ -455,6 +455,9 @@ export interface ElectronAPI {
   /** 生成 Agent 会话标题 */
   generateAgentTitle: (input: AgentGenerateTitleInput) => Promise<string | null>
 
+  /** 手动重新生成 Agent 会话标题（基于最近消息摘要，跳过节流） */
+  regenerateAgentTitle: (id: string) => Promise<import('@proma/shared').RegenerateTitleResult>
+
   /** 发送 Agent 消息 */
   sendAgentMessage: (input: AgentSendInput) => Promise<void>
 
@@ -584,7 +587,7 @@ export interface ElectronAPI {
   onAgentStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void
 
   /** 订阅 Agent 标题自动更新事件 */
-  onAgentTitleUpdated: (callback: (data: { sessionId: string; title: string }) => void) => () => void
+  onAgentTitleUpdated: (callback: (data: { sessionId: string; title: string; isAuto?: boolean }) => void) => () => void
 
   // ===== Agent 权限系统 =====
 
@@ -1469,6 +1472,10 @@ const electronAPI: ElectronAPI = {
 
   generateAgentTitle: (input: AgentGenerateTitleInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GENERATE_TITLE, input)
+  },
+
+  regenerateAgentTitle: (id: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.REGENERATE_TITLE, id)
   },
 
   sendAgentMessage: (input: AgentSendInput) => {

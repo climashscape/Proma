@@ -18,6 +18,7 @@ import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import type {
   AgentSendInput,
   AgentGenerateTitleInput,
+  RegenerateTitleResult,
   AgentSaveFilesInput,
   AgentSaveWorkspaceFilesInput,
   AgentSavedFile,
@@ -169,7 +170,7 @@ export async function runAgent(
           })
         }
       },
-      onTitleUpdated: (title) => {
+      onTitleUpdated: (title, isAuto) => {
         eventBus.emit(input.sessionId, {
           kind: 'proma_event',
           event: { type: 'title_updated', title },
@@ -178,6 +179,7 @@ export async function runAgent(
           webContents.send(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
             sessionId: input.sessionId,
             title,
+            isAuto: isAuto ?? false,
           })
         }
       },
@@ -266,6 +268,7 @@ export async function runAgentHeadless(
           wc.send(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
             sessionId: runInput.sessionId,
             title,
+            isAuto: false,
           })
         }
       },
@@ -306,6 +309,13 @@ export async function runAgentHeadless(
  */
 export async function generateAgentTitle(input: AgentGenerateTitleInput): Promise<string | null> {
   return orchestrator.generateTitle(input)
+}
+
+/**
+ * 手动重新生成 Agent 会话标题（基于最近消息摘要，跳过节流）
+ */
+export async function regenerateAgentTitle(sessionId: string): Promise<RegenerateTitleResult> {
+  return orchestrator.regenerateTitle(sessionId)
 }
 
 /**
