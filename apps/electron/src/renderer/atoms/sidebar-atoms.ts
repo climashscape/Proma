@@ -24,3 +24,27 @@ export const leftSidebarWidthAtom = atomWithStorage<number>(
   'proma-left-sidebar-width',
   300,
 )
+
+/** 自动任务区折叠状态（持久化到 localStorage） */
+export const automationCollapsedAtom = atomWithStorage<boolean>(
+  'proma-automation-collapsed',
+  false,
+)
+
+/** 各项目折叠状态（持久化到 localStorage），key = workspaceId */
+export const projectCollapsedMapAtom = atomWithStorage<Record<string, boolean>>(
+  'proma-project-collapsed-map',
+  {},
+)
+
+/** 用户展开的委派母会话 ID 列表（持久化到 localStorage） */
+export const expandedDelegationParentIdsAtom = atomWithStorage<string[]>(
+  'proma-expanded-delegation-parent-ids',
+  [],
+)
+
+/** 用户手动收起的委派母会话 ID 列表（持久化到 localStorage） */
+export const collapsedDelegationParentIdsAtom = atomWithStorage<string[]>(
+  'proma-collapsed-delegation-parent-ids',
+  [],
+)
