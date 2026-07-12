@@ -60,6 +60,9 @@ import {
   longTextPasteAsAttachmentEnabledAtom,
   richTextRenderingEnabledAtom,
   sessionHoverPreviewEnabledAtom,
+  progressiveTitleUpdateEnabledAtom,
+  titleModelChannelIdAtom,
+  titleModelIdAtom,
   initializeUiPreferences,
 } from './atoms/ui-preferences'
 import {
@@ -666,14 +669,21 @@ function UiPreferencesInitializer(): null {
   const setRichTextRenderingEnabled = useSetAtom(richTextRenderingEnabledAtom)
   const setSessionHoverPreviewEnabled = useSetAtom(sessionHoverPreviewEnabledAtom)
 
+  const setProgressiveTitleUpdateEnabled = useSetAtom(progressiveTitleUpdateEnabledAtom)
+  const setTitleModelChannelId = useSetAtom(titleModelChannelIdAtom)
+  const setTitleModelId = useSetAtom(titleModelIdAtom)
+
   useEffect(() => {
     initializeUiPreferences(
       setStickyUserMessageEnabled,
       setLongTextPasteAsAttachmentEnabled,
       setRichTextRenderingEnabled,
-      setSessionHoverPreviewEnabled
+      setSessionHoverPreviewEnabled,
+      setProgressiveTitleUpdateEnabled,
+      setTitleModelChannelId,
+      setTitleModelId,
     )
-  }, [setStickyUserMessageEnabled, setLongTextPasteAsAttachmentEnabled, setRichTextRenderingEnabled, setSessionHoverPreviewEnabled])
+  }, [setStickyUserMessageEnabled, setLongTextPasteAsAttachmentEnabled, setRichTextRenderingEnabled, setSessionHoverPreviewEnabled, setProgressiveTitleUpdateEnabled, setTitleModelChannelId, setTitleModelId])
 
   return null
 }

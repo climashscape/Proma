@@ -17,6 +17,15 @@ export const longTextPasteAsAttachmentEnabledAtom = atom<boolean>(false)
 /** 输入框是否渲染 Markdown 富文本格式（默认关闭，纯文本模式；开启后渲染富文本，仍保留 Mention 引用） */
 export const richTextRenderingEnabledAtom = atom<boolean>(false)
 
+/** 渐进式更新会话标题（话题偏移时自动重新生成，仅普通主会话生效） */
+export const progressiveTitleUpdateEnabledAtom = atom<boolean>(true)
+
+/** 渐进式标题更新/手动重生成所用模型渠道 ID（空 = 跟随当前会话渠道） */
+export const titleModelChannelIdAtom = atom<string>('')
+
+/** 渐进式标题更新/手动重生成所用模型 ID（空 = 跟随当前会话模型） */
+export const titleModelIdAtom = atom<string>('')
+
 /** 左侧会话列表悬浮预览迷你地图（默认关闭，需手动开启） */
 export const sessionHoverPreviewEnabledAtom = atom<boolean>(false)
 
@@ -29,7 +38,10 @@ export async function initializeUiPreferences(
   setStickyUserMessageEnabled: (enabled: boolean) => void,
   setLongTextPasteAsAttachmentEnabled?: (enabled: boolean) => void,
   setRichTextRenderingEnabled?: (enabled: boolean) => void,
-  setSessionHoverPreviewEnabled?: (enabled: boolean) => void
+  setSessionHoverPreviewEnabled?: (enabled: boolean) => void,
+  setProgressiveTitleUpdateEnabled?: (enabled: boolean) => void,
+  setTitleModelChannelId?: (channelId: string) => void,
+  setTitleModelId?: (modelId: string) => void,
 ): Promise<void> {
   try {
     const settings = await window.electronAPI.getSettings()
@@ -37,6 +49,9 @@ export async function initializeUiPreferences(
     setLongTextPasteAsAttachmentEnabled?.(settings.longTextPasteAsAttachmentEnabled ?? false)
     setRichTextRenderingEnabled?.(settings.richTextRenderingEnabled ?? false)
     setSessionHoverPreviewEnabled?.(settings.sessionHoverPreviewEnabled ?? false)
+    setProgressiveTitleUpdateEnabled?.(settings.progressiveTitleUpdateEnabled ?? true)
+    setTitleModelChannelId?.(settings.titleModelChannelId ?? '')
+    setTitleModelId?.(settings.titleModelId ?? '')
   } catch (error) {
     console.error('[UI偏好] 初始化失败:', error)
   }
@@ -85,5 +100,33 @@ export async function updateSessionHoverPreviewEnabled(enabled: boolean): Promis
     await window.electronAPI.updateSettings({ sessionHoverPreviewEnabled: enabled })
   } catch (error) {
     console.error('[UI偏好] 更新会话悬浮预览设置失败:', error)
+  }
+}
+
+/**
+ * 更新渐进式标题更新开关并持久化
+ */
+export async function updateProgressiveTitleUpdateEnabled(enabled: boolean): Promise<void> {
+  try {
+    await window.electronAPI.updateSettings({ progressiveTitleUpdateEnabled: enabled })
+  } catch (error) {
+    console.error('[UI偏好] 更新渐进式标题更新设置失败:', error)
+  }
+}
+
+/**
+ * 更新渐进式标题更新所用模型并持久化
+ *
+ * @param channelId 渠道 ID，空字符串表示清除（跟随会话渠道）
+ * @param modelId 模型 ID，空字符串表示清除（跟随会话模型）
+ */
+export async function updateTitleModel(channelId: string, modelId: string): Promise<void> {
+  try {
+    await window.electronAPI.updateSettings({
+      titleModelChannelId: channelId,
+      titleModelId: modelId,
+    })
+  } catch (error) {
+    console.error('[UI偏好] 更新标题模型设置失败:', error)
   }
 }

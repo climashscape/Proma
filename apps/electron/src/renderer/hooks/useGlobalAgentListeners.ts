@@ -1282,6 +1282,7 @@ export function useGlobalAgentListeners(): void {
         }
         }) // unstable_batchedUpdates
       }
+
     )
 
     // ===== 4. 独立规划窗口 → 主窗口 Todo Agent 接力 =====
@@ -1306,7 +1307,7 @@ export function useGlobalAgentListeners(): void {
     })
 
     // ===== 5. 标题更新 =====
-    const cleanupTitleUpdated = window.electronAPI.onAgentTitleUpdated(({ sessionId, title }) => {
+    const cleanupTitleUpdated = window.electronAPI.onAgentTitleUpdated(({ sessionId, title, isAuto }) => {
       // 先使用事件 payload 立即同步标签页，避免依赖会话列表旧快照比较。
       store.set(tabsAtom, (tabs) => updateTabTitle(tabs, sessionId, title))
       store.set(agentSessionsAtom, (prev) =>
@@ -1319,6 +1320,10 @@ export function useGlobalAgentListeners(): void {
           store.set(agentSessionsAtom, (prev) => mergeFetchedAgentSessions(prev, sessions))
         })
         .catch(console.error)
+      // 自动漂移更新静默 toast，不标绿色（非「成功操作」），低打扰
+      if (isAuto) {
+        toast(`标题已自动更新为：${title}`, { duration: 4000 })
+      }
     })
 
     // 定期清理 60s 前的「最近修改」标记，避免 atom 无限增长
