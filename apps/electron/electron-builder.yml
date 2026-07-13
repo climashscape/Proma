@@ -111,9 +111,7 @@ dmg:
     width: 540
     height: 380
 
-# ============================================
 # Windows 配置
-# ============================================
 win:
   icon: resources/icon.ico
   fileAssociations:
@@ -127,8 +125,9 @@ win:
     - target: nsis
       arch:
         - x64
+        - arm64
 
-# NSIS 安装程序配置
+# NSIS 安装程序配置（x64 + arm64 均使用 NSIS 安装器体验一致）
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

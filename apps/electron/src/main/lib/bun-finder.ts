@@ -12,20 +12,82 @@
  * 3. 开发仓库 apps/electron/vendor/bun/{platform-arch}/（dev 用）
  */
 
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { execSync, spawnSync } from 'child_process'
 import { app } from 'electron'
 import type { BunRuntimeStatus, PlatformArch } from '@proma/shared'
 
+// ============================================
+// 工具函数
+// ============================================
+
+/**
+ * 获取原生 CPU 架构（用于检测 Windows ARM64 模拟模式）
+ *
+ * 在 Windows ARM64 上运行 x64 进程时：
+ * - process.arch 返回 'x64'（模拟）
+ * - OS 提供的原生架构仍是 'ARM64'
+ *
+ * @returns Node.js 能识别的架构标识
+ */
+function getNativeArch(): 'arm64' | 'x64' | 'unknown' {
+  try {
+    // Windows: 通过 WMI 查询原生 CPU 架构
+    const wmicOutput = execSync('wmic cpu get Architecture', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim()
+    // WMI 返回：0=x86, 9= x64, 12=ARM64
+    // 但更可靠的方式是检查 PROCESSOR_PROCESSORID 环境变量
+    if (process.env.Processor_Architecture === 'ARM64') {
+      return 'arm64'
+    }
+    if (process.env.Processor_Architecture === 'AMD64') {
+      return 'x64'
+    }
+    // fallback: 从 wmic 输出解析（备用）
+    if (wmicOutput.includes('ARM64') || wmicOutput.includes('12')) {
+      return 'arm64'
+    }
+    if (wmicOutput.includes('x64') || wmicOutput.includes('9')) {
+      return 'x64'
+    }
+  } catch {
+    // wmi 失败，fallback 到 process.arch
+  }
+  return 'unknown'
+}
+
 /**
  * 获取当前平台架构标识
+ *
+ * 在 Windows ARM64 模拟模式下（x64 进程运行在 ARM64 上）：
+ * - process.platform === 'win32'
+ * - process.arch === 'x64'（模拟）
+ * - 但实际原生架构是 ARM64
+ *
+ * 优先使用原生架构检测，fallback 到 process.arch
  *
  * @returns 当前系统的平台架构组合
  */
 export function getCurrentPlatformArch(): PlatformArch {
   const platform = process.platform as 'darwin' | 'linux' | 'win32'
-  const arch = process.arch as 'arm64' | 'x64'
+
+  // Windows 特殊处理：检测原生架构
+  let arch: 'arm64' | 'x64'
+  if (platform === 'win32') {
+    const nativeArch = getNativeArch()
+    if (nativeArch !== 'unknown') {
+      arch = nativeArch
+    } else {
+      // fallback 到 process.arch（正常模式或 wmi 失败）
+      arch = process.arch as 'arm64' | 'x64'
+    }
+  } else {
+    // macOS/Linux 直接使用 process.arch
+    arch = process.arch as 'arm64' | 'x64'
+  }
 
   // 验证支持的组合
   const platformArch = `${platform}-${arch}` as PlatformArch
@@ -35,6 +97,7 @@ export function getCurrentPlatformArch(): PlatformArch {
     'darwin-x64',
     'linux-arm64',
     'linux-x64',
+    'win32-arm64',
     'win32-x64',
   ]
 

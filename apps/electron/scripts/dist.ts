@@ -5,16 +5,33 @@
  * 功能：
  * - 分步执行打包流程，每步带计时和状态指示
  * - 支持只构建当前架构（--current-arch）加速开发测试
+ * - 支持指定目标架构（--arm64 / --x64）覆盖当前架构
+ * - 支持跨平台构建（如 macOS 构建 Windows ARM64）
  * - 支持详细输出模式（--verbose）查看 electron-builder 完整日志
  * - 支持跳过代码签名（--no-sign）
  * - 支持只构建 DMG 或 ZIP（--dmg / --zip）
+ * - 支持跳过 CLI 编译（--skip-cli），用于跨架构构建时避免 bun build --compile 交叉编译问题
  *
  * 使用：
- * bun run scripts/dist.ts                          # 完整打包（双架构 + DMG + ZIP）
+ * # 本机构建（按当前系统架构）
+ * bun run scripts/dist.ts                           # 完整打包（双架构 + DMG + ZIP）
  * bun run scripts/dist.ts --current-arch            # 只构建当前架构（快速）
- * bun run scripts/dist.ts --current-arch --verbose   # 当前架构 + 详细日志
- * bun run scripts/dist.ts --current-arch --dmg       # 当前架构 + 只构建 DMG
+ *
+ * # 显式指定目标架构（覆盖当前架构）
+ * bun run scripts/dist.ts --arm64                   # 只构建 ARM64
+ * bun run scripts/dist.ts --x64                     # 只构建 x64
+ * bun run scripts/dist.ts --arm64 --verbose         # ARM64 + 详细日志
+ * bun run scripts/dist.ts --x64 --dmg               # x64 + 只构建 DMG
+ *
+ * # 高级用法
  * bun run scripts/dist.ts --no-sign                 # 跳过代码签名
+ * bun run scripts/dist.ts --arm64 --skip-cli        # ARM64 交叉构建（x64 主机，跳过 CLI）
+ *
+ * # 跨平台构建（在非目标平台构建）
+ * bun run scripts/dist.ts --win --arm64             # macOS 下构建 Windows ARM64
+ * bun run scripts/dist.ts --win --x64               # macOS 下构建 Windows x64
+ * bun run scripts/dist.ts --linux --arm64           # macOS 下构建 Linux ARM64
+ * bun run scripts/dist.ts --linux --x64             # macOS 下构建 Linux x64
  */
 
 import { spawnSync } from 'child_process'
@@ -37,6 +54,8 @@ interface DistOptions {
   noSign: boolean
   targetFormat: 'all' | 'dmg' | 'zip' | 'dir'
   platform: 'mac' | 'win' | 'linux'
+  targetArch: 'arm64' | 'x64' | null  // 显式指定目标架构（覆盖当前架构）
+  skipCli: boolean                     // 跳过 CLI 编译（跨架构构建时使用）
 }
 
 // ============================================
@@ -134,10 +153,22 @@ function runStep(
 
 function parseArgs(): DistOptions {
   const args = process.argv.slice(2)
+  
+  // 检查冲突参数
+  const hasTargetArch = args.some(a => a === '--arm64' || a === '--x64')
+  const hasCurrentArch = args.includes('--current-arch')
+  
+  // 优先级：--arm64/--x64 > --current-arch
+  if (hasTargetArch && hasCurrentArch) {
+    console.warn(`${color.yellow}[dist] 警告：同时使用 --arm64/--x64 和 --current-arch，忽略 --current-arch${color.reset}`)
+  }
+  
   return {
-    currentArch: args.includes('--current-arch'),
+    currentArch: hasCurrentArch && !hasTargetArch,
     verbose: args.includes('--verbose'),
     noSign: args.includes('--no-sign'),
+    skipCli: args.includes('--skip-cli'),
+    targetArch: args.includes('--arm64') ? 'arm64' : args.includes('--x64') ? 'x64' : null,
     targetFormat: args.includes('--dmg')
       ? 'dmg'
       : args.includes('--zip')
@@ -155,16 +186,22 @@ function parseArgs(): DistOptions {
 
 function main(): void {
   const opts = parseArgs()
-  const arch = process.arch // arm64 或 x64
+  const arch = process.arch
   const results: StepResult[] = []
 
   // 打印配置信息
   console.log(`\n${color.bgBlue}${color.bold} Proma 打包工具 ${color.reset}\n`)
   console.log(`  ${color.bold}平台${color.reset}:     ${opts.platform}`)
-  console.log(`  ${color.bold}架构${color.reset}:     ${opts.currentArch ? arch + ' (仅当前)' : 'arm64 + x64'}`)
+  const archDisplay = opts.targetArch
+    ? `${opts.targetArch} (指定)`
+    : opts.currentArch
+      ? `${arch} (仅当前)`
+      : 'arm64 + x64'
+  console.log(`  ${color.bold}架构${color.reset}:     ${archDisplay}`)
   console.log(`  ${color.bold}格式${color.reset}:     ${opts.targetFormat}`)
   console.log(`  ${color.bold}签名${color.reset}:     ${opts.noSign ? '跳过' : '启用'}`)
   console.log(`  ${color.bold}详细日志${color.reset}: ${opts.verbose ? '开启' : '关闭'}`)
+  console.log(`  ${color.bold}跳过 CLI${color.reset}:  ${opts.skipCli ? '是' : '否'}`)
   printSeparator()
 
   const totalSteps = 6
@@ -200,8 +237,11 @@ function main(): void {
   // ── 步骤 4: 编译 proma CLI 二进制 ──
   step++
   printStepStart(step, totalSteps, '编译 proma CLI (bun --compile)')
+
+  // 跨架构构建时跳过 CLI 编译（bun build --compile 不支持交叉编译）
+  const skipCli = opts.skipCli || (opts.targetArch && opts.targetArch !== arch)
   results.push(
-    runStep('编译 proma CLI', 'bun', ['run', 'build:cli'], { verbose: opts.verbose })
+    runStep('编译 proma CLI', 'bun', ['run', 'build:cli'], { verbose: opts.verbose, skip: skipCli })
   )
   printStepResult(results[results.length - 1])
   if (!results[results.length - 1].success) return printSummary(results)
@@ -220,8 +260,10 @@ function main(): void {
 
   const builderArgs = ['electron-builder', `--${opts.platform}`]
 
-  // 只构建当前架构
-  if (opts.currentArch) {
+  // 指定目标架构（支持显式指定，用于跨架构构建如 x64 → arm64）
+  if (opts.targetArch) {
+    builderArgs.push(`--${opts.targetArch}`)
+  } else if (opts.currentArch) {
     builderArgs.push(`--${arch}`)
   }
 

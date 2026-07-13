@@ -4,7 +4,7 @@
  *
  * 功能：
  * - 从 GitHub releases 下载指定版本的 Bun 二进制文件
- * - 支持所有目标平台（darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64）
+ * - 支持所有目标平台（darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64, win32-arm64）
  * - SHA256 校验验证
  * - 解压到 vendor/bun/{platform-arch}/ 目录
  *
@@ -30,6 +30,7 @@ const PLATFORM_ARCH_MAP: Record<PlatformArch, string> = {
   'darwin-x64': 'darwin-x64',
   'linux-arm64': 'linux-aarch64',
   'linux-x64': 'linux-x64',
+  'win32-arm64': 'windows-aarch64',
   'win32-x64': 'windows-x64',
 }
 
@@ -39,6 +40,7 @@ const TARGET_PLATFORMS: PlatformArch[] = [
   'darwin-x64',
   'linux-arm64',
   'linux-x64',
+  'win32-arm64',
   'win32-x64',
 ]
 
