@@ -60,6 +60,7 @@ import { estimateTokenCount, WRITE_CONTENT_TOKEN_THRESHOLD } from './agent-tool-
 import { injectBuiltinMcpServers } from './builtin-mcp/registry'
 import { buildPiBuiltinTools } from './adapters/pi-builtin-tools'
 import type { AgentRuntimeEnv } from './agent-runtime-env'
+import { isPartialSDKMessage } from './bridge-agent-message-utils'
 
 // ===== 类型定义 =====
 
@@ -93,6 +94,9 @@ function sdkPermissionModeForPromaMode(mode: PromaPermissionMode): PromaPermissi
 }
 
 function normalizeAgentRuntime(value: unknown): AgentRuntime {
+  if (value !== 'pi' && value !== undefined && value !== null) {
+    console.warn(`[Agent 编排] 无法识别的 agentRuntime 值 "${value}"，降级为 claude`)
+  }
   return value === 'pi' ? 'pi' : 'claude'
 }
 
@@ -107,7 +111,9 @@ function buildPiRuntimeEnv(env: Record<string, string | undefined>): AgentRuntim
 function resolvePiThinkingLevel(settings: ReturnType<typeof getSettings>): AgentThinkingLevel {
   if (settings.agentThinking?.type === 'disabled') return 'off'
   if (settings.agentEffort === 'max') return 'xhigh'
-  return settings.agentEffort ?? (settings.agentThinking ? 'high' : 'off')
+  // agentThinking.type === 'enabled' 是 Claude 固定 budget 模式，对应 Pi 的最小思考级别
+  if (settings.agentThinking?.type === 'enabled') return 'minimal'
+  return settings.agentEffort ?? 'off'
 }
 
 const EMPTY_RESPONSE_RESULT_SUBTYPE = 'empty_response'
@@ -118,10 +124,6 @@ function errorMessageOf(error: unknown): string {
 
 function isMissingActiveQueueChannelError(error: unknown): boolean {
   return errorMessageOf(error).includes('无活跃消息通道可注入队列消息')
-}
-
-function isPartialSDKMessage(message: SDKMessage): boolean {
-  return (message as Record<string, unknown>)._partial === true
 }
 
 function isVisibleRunMessage(message: SDKMessage): boolean {
@@ -148,8 +150,11 @@ function isVisibleRunMessage(message: SDKMessage): boolean {
   }
 
   if (message.type === 'system') {
-    const subtype = (message as SDKSystemMessage).subtype
-    return subtype === 'task_started' || subtype === 'task_progress' || subtype === 'task_notification'
+    const systemMessage = message as SDKSystemMessage
+    return isPersistableSDKSystemMessage(systemMessage)
+      || systemMessage.subtype === 'task_started'
+      || systemMessage.subtype === 'task_progress'
+      || systemMessage.subtype === 'task_notification'
   }
 
   return false
@@ -1548,9 +1553,10 @@ export class AgentOrchestrator {
         }
       }
       const handleModelResolved = (model: string): void => {
-        resolvedModel = model
+        // `[1m]` 是 SDK 内部上下文变体，不应泄漏到 UI 或标题生成
+        resolvedModel = model.replace(/\[1m\]$/i, '')
         console.log(`[Agent 编排] SDK 确认模型: ${resolvedModel}`)
-        this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'model_resolved', model } })
+        this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'model_resolved', model: resolvedModel } })
       }
       const handleContextWindow = (cw: number): void => {
         console.log(`[Agent 编排] 缓存 contextWindow: ${cw}`)
@@ -1577,8 +1583,8 @@ export class AgentOrchestrator {
         canUseTool,
         systemPrompt: systemPromptAppend + buildPiAdditionalDirectoriesPrompt(allAdditionalDirectories),
         resumeSessionId: existingSdkSessionId,
-        piAgentDir: getSdkConfigDir(),
-        piSessionDir: join(getSdkConfigDir(), 'sessions'),
+        piAgentDir: join(getSdkConfigDir(), 'pi'),
+        piSessionDir: join(getSdkConfigDir(), 'pi', 'sessions'),
         ...(allAdditionalDirectories.length > 0 && { additionalDirectories: allAdditionalDirectories }),
         ...(workspaceSlug ? { additionalSkillPaths: [getWorkspaceSkillsDir(workspaceSlug)] } : {}),
         ...(mentionedSkills?.length ? { skillMentions: mentionedSkills } : {}),

@@ -120,7 +120,7 @@ async function findPiCatalogModel(provider: ProviderType, modelId: string): Prom
 async function resolvePiModelDefaults(input: PiAgentQueryOptions): Promise<PiModelDefaults> {
   const catalogModel = input.model ? await findPiCatalogModel(input.provider, input.model) : undefined
   return {
-    reasoning: catalogModel?.reasoning ?? true,
+    reasoning: catalogModel?.reasoning ?? false,
     input: catalogModel ? [...catalogModel.input] : ['text', 'image'],
     cost: catalogModel ? { ...catalogModel.cost } : { ...ZERO_MODEL_COST },
     contextWindow: catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
@@ -133,10 +133,8 @@ function normalizePiBaseUrl(baseUrl: string | undefined, provider: ProviderType)
   if (normalizePiApi(provider) === 'anthropic-messages') {
     return normalizeAnthropicBaseUrlForSdk(resolveAnthropicMessagesUrl(baseUrl, provider))
   }
-  if (provider === 'custom') {
-    return normalizeOpenAIBaseUrlForSdk(baseUrl)
-  }
-  return baseUrl.trim().replace(/\/$/, '')
+  // OpenAI 兼容供应商统一走 normalizeOpenAIBaseUrlForSdk（剥除 /chat/completions 等后缀）
+  return normalizeOpenAIBaseUrlForSdk(baseUrl)
 }
 
 function requiresPromaUserAgent(provider: ProviderType): boolean {

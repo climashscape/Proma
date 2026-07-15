@@ -178,8 +178,14 @@ function isAssistantLikeMessage(message: unknown): message is AgentMessage & { r
 
 function extractMessageCostUsd(message: AgentMessage): number | undefined {
   if (!isRecord(message) || !isRecord(message.usage) || !isRecord(message.usage.cost)) return undefined
+  // Pi SDK 的 cost 可能使用 total 或分拆为 input + output 字段
   const total = message.usage.cost.total
-  return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : undefined
+  if (typeof total === 'number' && Number.isFinite(total) && total >= 0) return total
+  const input = message.usage.cost.input
+  const output = message.usage.cost.output
+  const inputCost = typeof input === 'number' && Number.isFinite(input) && input >= 0 ? input : 0
+  const outputCost = typeof output === 'number' && Number.isFinite(output) && output >= 0 ? output : 0
+  return inputCost > 0 || outputCost > 0 ? inputCost + outputCost : undefined
 }
 
 function validateFinalOutput(messages: AgentMessage[], outputFormat: JsonSchemaOutputFormat): ValidationFailure[] {

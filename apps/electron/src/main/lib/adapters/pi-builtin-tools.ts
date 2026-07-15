@@ -8,11 +8,8 @@
  * 用 Pi ToolDefinition 格式暴露相同的业务能力，避免 Pi runtime 下这些工具缺失。
  */
 
-// @ts-expect-error — typebox resolved at runtime via external dependency
 import { Type } from 'typebox'
-// @ts-expect-error — Pi SDK types resolved at runtime via external dependency
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
-// @ts-expect-error — Pi SDK types resolved at runtime via external dependency
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 import type { PromaPermissionMode } from '@proma/shared'
 import type {
@@ -152,7 +149,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         active: Type.Optional(Type.Boolean({ description: '只列出启用或暂停任务；不传则列出全部' })),
         includeHistory: Type.Optional(Type.Boolean({ description: '是否包含运行历史，默认 false' })),
       }),
-      async execute(_toolCallId: string, params: unknown) {
+      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, _ctx?: unknown) {
         const args = params as { active?: boolean; includeHistory?: boolean }
         const items = listAutomations()
           .filter((a) => args.active === undefined || a.active === args.active)
@@ -167,7 +164,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
       parameters: Type.Object({
         id: Type.Optional(Type.String({ description: '定时任务 ID；定时任务自动执行中可省略以读取当前任务' })),
       }),
-      async execute(_toolCallId: string, params: unknown) {
+      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, _ctx?: unknown) {
         const args = params as { id?: string }
         const id = args.id?.trim() || getCurrentAutomationId(ctx)
         if (!id) throw new Error('id 必填；只有定时任务自动执行中才可以省略 id')
@@ -199,7 +196,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         active: Type.Optional(Type.Boolean({ description: '创建后是否启用，默认 true' })),
         sessionMode: Type.Optional(Type.Union([Type.Literal('daily'), Type.Literal('reuse')], { description: '会话模式' })),
       }),
-      async execute(_toolCallId: string, params: unknown) {
+      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, _ctx?: unknown) {
         const args = params as Record<string, unknown>
         if (ctx.triggeredBy === 'automation' || getCurrentAutomationId(ctx)) {
           throw new Error('当前是定时任务自动执行，禁止递归创建新的定时任务')
@@ -266,7 +263,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         active: Type.Optional(Type.Boolean({ description: '启用或暂停任务' })),
         sessionMode: Type.Optional(Type.Union([Type.Literal('daily'), Type.Literal('reuse')])),
       }),
-      async execute(_toolCallId: string, params: unknown) {
+      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, _ctx?: unknown) {
         const args = params as Record<string, unknown>
         const id = (args.id as string)?.trim() || getCurrentAutomationId(ctx)
         if (!id) throw new Error('id 必填；只有定时任务自动执行中才可以省略 id')
@@ -306,7 +303,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
       parameters: Type.Object({
         id: Type.String({ description: '要删除的定时任务 ID' }),
       }),
-      async execute(_toolCallId: string, params: unknown) {
+      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, _ctx?: unknown) {
         const args = params as { id: string }
         const ok = deleteAutomation(assertNonBlank(args.id, 'id'))
         if (ok) broadcastAutomationsChanged()
@@ -320,13 +317,15 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
       parameters: Type.Object({
         id: Type.Optional(Type.String({ description: '要立即运行的定时任务 ID；定时任务自动执行中可省略以运行当前任务' })),
       }),
-      async execute(_toolCallId: string, params: unknown) {
+      async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, _ctx?: unknown) {
         const args = params as { id?: string }
         const id = args.id?.trim() || getCurrentAutomationId(ctx)
         if (!id) throw new Error('id 必填；只有定时任务自动执行中才可以省略 id')
         if (ctx.triggeredBy === 'automation' && id === getCurrentAutomationId(ctx)) {
           throw new Error('当前任务正在自动执行，不能立即运行自身')
         }
+        // run_automation_now 可能阻塞，支持 signal 取消
+        if (signal?.aborted) throw new Error('操作被取消')
         await runAutomationNow(id)
         return jsonToolResult({ started: true, id })
       },

@@ -56,7 +56,6 @@ import {
   displayToolName,
   dropTrailingAbortedAssistant,
   hasToolResult,
-  isAbortedAssistantMessage,
   isAssistantPiMessage,
   normalizePermissionInput,
   restorePiInput,
@@ -119,6 +118,7 @@ interface ActivePiSession {
   rejectReady: (error: unknown) => void
   abortRequested: boolean
   interrupting: boolean
+  abortInProgress: boolean
   pendingInterruptPrompts: PendingInterruptPrompt[]
   interruptAbortPromise?: Promise<void>
   readySettled: boolean
@@ -130,6 +130,8 @@ interface PendingInterruptPrompt {
   content: string
   resolveAccepted: () => void
   rejectAccepted: (error: unknown) => void
+  /** 在 session.prompt() 完成后回调（用于向调用方确认消息已进入 Pi 运行时） */
+  onAccepted?: () => void
 }
 
 interface PromaTaskItem {
@@ -287,7 +289,6 @@ export function applyPiProxySettingsForQuery(
   } catch (error) {
     console.warn('[Pi SDK] 应用 Pi proxy helper 失败，已回退到 scoped proxy env:', error)
   }
-  setScopedProxyEnv(proxyUrl)
   return restoreProxyEnv
 }
 
@@ -305,7 +306,6 @@ function createAsyncQueue<T>(): AsyncQueue<T> {
       } else if (failure) {
         const err = failure
         failure = undefined
-        Promise.resolve().then(() => { throw err }).catch(() => {})
         waiter(Promise.reject(err) as unknown as IteratorResult<T>)
       } else {
         waiter({ value: undefined, done: true })
@@ -389,6 +389,7 @@ function createActivePiSession(): ActivePiSession {
     rejectReady,
     abortRequested: false,
     interrupting: false,
+    abortInProgress: false,
     pendingInterruptPrompts: [],
     readySettled: false,
     disposed: false,
@@ -1418,7 +1419,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
               break
             }
             case 'message_end': {
-              if (active.interrupting && isAbortedAssistantMessage(event.message)) {
+              if (active.interrupting) {
+                // 中断时 Pi SDK 可能产出 stopReason === 'aborted'、'ended' 或 undefined，
+                // 无论哪种都保留已输出的 partial 内容，避免用户看到消息消失
                 if (lastPartialAssistant) {
                   const converted = convertPiMessage(lastPartialAssistant, session.sessionId, input.model, {
                     final: true,
@@ -1530,7 +1533,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
               queue.fail(error)
             }
           })
-          .finally(cleanupActiveSession)
       } else {
         const runPromptChain = async (): Promise<void> => {
           let nextPrompt: string | undefined = appendOutputFormatInstruction(input.prompt, input.outputFormat)
@@ -1559,6 +1561,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
               }
               currentInterrupt?.resolveAccepted()
               await session.prompt(prompt, { source: 'rpc' })
+              currentInterrupt?.onAccepted?.()
             } finally {
               if (active.interrupting) {
                 session.agent.state.messages = dropTrailingAbortedAssistant(session.agent.state.messages)
@@ -1582,7 +1585,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         runPromptChain()
           .then(() => queue.close())
           .catch((error) => queue.fail(error))
-          .finally(cleanupActiveSession)
       }
     } catch (error) {
       rejectActiveReady(active, error)
@@ -1606,6 +1608,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     active.abortRequested = true
     rejectPendingInterruptPrompts(active, createAbortError())
     if (!active.session) rejectActiveReady(active, createAbortError())
+    active.interruptAbortPromise = undefined
+    active.abortInProgress = false
     active.session?.abort().catch(() => {})
   }
 
@@ -1637,6 +1641,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           content,
           resolveAccepted: resolve,
           rejectAccepted: reject,
+          onAccepted: options.onAccepted,
         })
       })
       accepted.catch(() => {})
@@ -1644,14 +1649,18 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         // Pi 没有单独的 interrupt()；公开取消 API 是 abort()。
         // 这里把 abort 产生的内部 aborted 终态压住，再由 query 的 prompt chain 发送新消息。
         active.interrupting = true
-        active.interruptAbortPromise ??= session.abort()
-          .finally(() => {
-            active.interruptAbortPromise = undefined
-          })
+        if (!active.abortInProgress) {
+          active.abortInProgress = true
+          active.interruptAbortPromise = session.abort()
+            .finally(() => {
+              active.interruptAbortPromise = undefined
+              active.abortInProgress = false
+            })
+        }
         await active.interruptAbortPromise
       }
       await accepted
-      options.onAccepted?.()
+      // onAccepted 延迟到 runPromptChain 中 session.prompt() 完成后触发
       return
     }
     if (message.priority === 'now') {
@@ -1662,8 +1671,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     options?.onAccepted?.()
   }
 
-  async cancelQueuedMessage(_sessionId: string, _messageUuid: string): Promise<void> {
-    // Pi 的公开 SDK 当前只暴露 clearQueue，不支持按消息 UUID 删除。
+  async cancelQueuedMessage(sessionId: string, _messageUuid: string): Promise<void> {
+    // Pi SDK 当前只暴露 clearQueue（清空整个队列），不支持按消息 UUID 删除。
+    // 这里降级为清空整个队列，比静默不做好。
+    const active = this.activeSessions.get(sessionId)
+    if (!active) return
+    const session = await waitForActiveSession(active).catch(() => undefined)
+    session?.agent.clearAllQueues()
   }
 
   async setPermissionMode(_sessionId: string, _mode: string): Promise<void> {

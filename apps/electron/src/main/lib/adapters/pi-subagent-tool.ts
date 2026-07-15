@@ -297,7 +297,8 @@ export function createSubagentToolDefinition(deps: SubagentToolDeps): ToolDefini
               }
               // 故意不转发 agent_end：子代理的结束不是父 turn 的结束，父 turn 由本工具 return 收敛。
             }
-          } catch {
+          } catch (err) {
+            console.error('[PiSubagent] 事件处理器错误:', err)
             // 子消息桥接失败不应中断子代理执行；结果仍会通过最终 return 汇报。
           }
         })
