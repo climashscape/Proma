@@ -102,6 +102,9 @@ export function createAgentRuntimeGuard(options: AgentRuntimeGuardOptions): Agen
 
       if (!options.outputFormat) return undefined
 
+      // 空消息数组直接返回 limitOverride（已处理）
+      if (messages.length === 0) return undefined
+
       const validation = validateFinalOutput(messages, options.outputFormat)
       if (validation.length === 0) return undefined
       return {

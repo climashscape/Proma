@@ -72,7 +72,8 @@ async function sendStdioRequest(
     const id = nextRpcId()
     const request: JsonRpcRequest = { jsonrpc: '2.0', id, method, params }
 
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
+      cleanup()
       reject(new Error(`MCP stdio 请求超时 (${method}): ${id}`))
     }, timeoutMs)
 
@@ -103,7 +104,10 @@ async function sendStdioRequest(
 
     const cleanup = (): void => {
       clearTimeout(timer)
+      timer = undefined as unknown as NodeJS.Timeout
       process.stdout?.removeListener('data', onData)
+      // 移除 stderr 监听器（虽然无操作，但保持对称性）
+      process.stderr?.removeListener('data', onData)
     }
 
     process.stdin?.write(JSON.stringify(request) + '\n')
@@ -163,6 +167,12 @@ async function createStdioMcpClient(
 
   // 消费 stderr（MCP 服务器可能输出日志到 stderr）
   child.stderr?.on('data', () => {})
+
+  // 监听子进程 close 事件，在退出时清理引用
+  child.on('close', (code, signal) => {
+    console.log(`[Pi MCP 桥接] stdio MCP 子进程退出: ${name} (code: ${code}, signal: ${signal})`)
+    // 注意：这里只记录日志，实际清理在 cleanupMcpClients 或 client.close() 中完成
+  })
 
   // 初始化握手
   await sendStdioRequest(child, 'initialize', {

@@ -188,6 +188,15 @@ const PI_PROXY_ENV_KEYS = [
   'all_proxy',
 ] as const
 
+/**
+ * scopedProxyEnvStack 和 scopedProxyEnvOriginal 用于管理 Pi runtime 的代理环境变量。
+ *
+ * 注意：Node.js 事件循环是单线程的，所以对 process.env 的修改不会产生真正的竞态。
+ * 这个栈结构主要用于支持多个 Pi 会话嵌套设置代理（如子代理嵌套父代理）时的正确恢复。
+ *
+ * 如果未来引入 WebWorker 或多线程场景，需要改用 AsyncLocalStorage 或 AsyncResource 来隔离
+ * 各线程的环境变量。
+ */
 const scopedProxyEnvStack: ScopedProxyEnvEntry[] = []
 let scopedProxyEnvOriginal: Map<string, string | undefined> | undefined
 

@@ -11,6 +11,31 @@ import type { AssistantMessage, ToolResultMessage, UserMessage } from '@earendil
 import type { SDKMessage } from '@proma/shared'
 import type { RuntimeGuardResultOverride } from '../agent-runtime-guards'
 
+/**
+ * 判断消息是否为 Pi SDK 的预览帧。
+ *
+ * Pi SDK 在流式响应中会用 `_partial` 字段标记未完成的中间帧。
+ * 注意：这是 Pi SDK 内部实现字段（非公开契约），版本更新后可能改变字段名。
+ * 本模块集中处理该逻辑，避免各处重复实现。
+ */
+export function isPartialSDKMessage(message: SDKMessage): boolean {
+  return (message as Record<string, unknown>)._partial === true
+}
+
+/**
+ * 从 Assistant 消息中提取最终文本内容。
+ * 如果是预览帧（_partial === true）则返回空字符串。
+ */
+export function extractFinalAssistantText(message: SDKMessage): string {
+  if (message.type !== 'assistant') return ''
+  if (isPartialSDKMessage(message)) return ''
+
+  const assistant = message as SDKMessage & { message?: { content?: Array<{ type?: string; text?: string }> } }
+  return (assistant.message?.content ?? [])
+    .map((block) => block.type === 'text' && typeof block.text === 'string' ? block.text : '')
+    .join('')
+}
+
 function getPiEditItems(input: Record<string, unknown>): Array<Record<string, unknown>> {
   return Array.isArray(input.edits)
     ? input.edits.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
