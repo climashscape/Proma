@@ -5,6 +5,7 @@
  * JSONL 持久化和历史会话展示在 SDK 迁移时一起改名。
  */
 
+import { buildMcpCustomTools } from './pi-mcp-bridge'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
@@ -112,6 +113,10 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   subagentModel?: string
   /** 手动压缩请求：走 pi 原生 session.compact()，而非把 /compact 当普通 prompt 发给模型 */
   compactRequest?: boolean
+  /** 触发类型 */
+  triggeredBy?: 'user' | 'automation' | 'delegation'
+  /** 用户配置的外部 MCP 服务器（stdio/http/sse），通过 pi-mcp-bridge.ts 桥接为 customTools */
+  mcpServers?: Record<string, import('@proma/shared').McpServerEntry>
 }
 
 interface ActivePiSession {
@@ -1274,6 +1279,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
     const cleanupActiveSession = (): void => {
       try {
+        cleanupMcpClients?.()
         unsubscribe?.()
         unsubscribe = undefined
         if (!active.disposed) {
@@ -1337,6 +1343,19 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             })]
           : []),
       ]
+
+      // 外部 MCP 服务器桥接：将用户配置的 MCP 服务器（stdio/http/sse）注册为 Pi customTools
+      let cleanupMcpClients: (() => void) | undefined
+      if (input.mcpServers && Object.keys(input.mcpServers).length > 0) {
+        try {
+          const mcpResult = await buildMcpCustomTools(sdk, input.mcpServers)
+          customTools.push(...mcpResult.tools as ToolDefinition[])
+          cleanupMcpClients = mcpResult.cleanup
+          console.log(`[Pi MCP 桥接] 已桥接 ${mcpResult.tools.length} 个 MCP 工具`)
+        } catch (error) {
+          console.warn('[Pi MCP 桥接] 桥接 MCP 服务器失败:', error)
+        }
+      }
 
       const settingsManager = sdk.SettingsManager.inMemory({
         compaction: { enabled: false },

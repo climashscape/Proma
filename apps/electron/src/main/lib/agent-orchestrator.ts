@@ -1241,10 +1241,9 @@ export class AgentOrchestrator {
         : await (async () => {
           const piSdk = await import('@earendil-works/pi-coding-agent')
           // Pi 内置工具桥接层：Automation 等已通过 pi-builtin-tools.ts 转化为 customTools。
-          // Pi 的 createAgentSession 不支持 mcpServers 参数，因此用户配置的 MCP 服务器
-          // （stdio/http/sse）当前无法在 Pi 运行时中使用。这属于 Pi SDK 能力限制，
-          // 待 Pi SDK 支持 MCP 后再补充。
-          // TODO: 当 Pi SDK 支持 MCP servers 时，将 mcpServers 传递给 createAgentSession。
+          // 外部 MCP 服务器（stdio/http/sse）通过 pi-mcp-bridge.ts 桥接为 customTools，
+          // 在 PiAgentAdapter.query() 中消费 mcpServers 参数，在 query 开始时建立连接，
+          // 在 cleanupActiveSession 时断开。
           const result = await buildPiBuiltinTools(piSdk, {
             sessionId,
             channelId,
@@ -1600,6 +1599,7 @@ export class AgentOrchestrator {
           maxBudgetUsd: appSettings.agentMaxBudgetUsd,
         }),
         ...(piBuiltinTools.length > 0 && { customTools: piBuiltinTools as PiAgentQueryOptions['customTools'] }),
+        ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
         onSessionId: handleSessionId,
         onModelResolved: handleModelResolved,
         onContextWindow: handleContextWindow,
