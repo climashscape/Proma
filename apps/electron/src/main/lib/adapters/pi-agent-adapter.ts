@@ -91,7 +91,11 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   thinkingLevel?: AgentThinkingLevel
   maxBudgetUsd?: number
   outputFormat?: JsonSchemaOutputFormat
-  /** Proma 聚合的附加目录；Pi 内置工具 factory 不接收多 root 参数，编排层会把它们注入 systemPrompt。 */
+  /**
+   * Proma 聚合的附加目录，已由编排层通过 buildPiAdditionalDirectoriesPrompt 注入到 systemPrompt 中。
+   * Pi 内置工具 factory 不接收多 root 参数，故本字段不在 query() 中消费，仅作为接口记录。
+   * @deprecated 仅用于类型接口记录，实际被注入到 systemPrompt 中。
+   */
   additionalDirectories?: string[]
   additionalSkillPaths?: string[]
   /** 当前用户输入显式引用的 Skill name（兼容历史 slug 已在编排层归一化） */
@@ -1529,6 +1533,22 @@ export class PiAgentAdapter implements AgentProviderAdapter {
                 session_id: session.sessionId,
               } as unknown as SDKMessage)
               queue.close()
+            } else if (/compaction.*in progress|already compacting|is already/i.test(message)) {
+              // Pi SDK 正在进行自动压缩，并发 compact() 调用会冲突。友好提示后正常收尾。
+              queue.push({
+                type: 'system',
+                subtype: 'compact_noop',
+                session_id: session.sessionId,
+                message: '压缩正在进行中，请稍后再试。',
+              } as unknown as SDKMessage)
+              queue.push({
+                type: 'result',
+                subtype: 'success',
+                usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+                terminal_reason: 'completed',
+                session_id: session.sessionId,
+              } as unknown as SDKMessage)
+              queue.close()
             } else {
               queue.fail(error)
             }
@@ -1608,9 +1628,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     active.abortRequested = true
     rejectPendingInterruptPrompts(active, createAbortError())
     if (!active.session) rejectActiveReady(active, createAbortError())
-    active.interruptAbortPromise = undefined
-    active.abortInProgress = false
-    active.session?.abort().catch(() => {})
+    active.abortInProgress = true
+    active.session?.abort().catch(() => {}).finally(() => {
+      active.interruptAbortPromise = undefined
+      active.abortInProgress = false
+    })
   }
 
   async sendQueuedMessage(

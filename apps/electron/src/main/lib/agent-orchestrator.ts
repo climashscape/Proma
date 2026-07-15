@@ -110,10 +110,12 @@ function buildPiRuntimeEnv(env: Record<string, string | undefined>): AgentRuntim
 
 function resolvePiThinkingLevel(settings: ReturnType<typeof getSettings>): AgentThinkingLevel {
   if (settings.agentThinking?.type === 'disabled') return 'off'
-  if (settings.agentEffort === 'max') return 'xhigh'
+  if (settings.agentEffort === 'max' || settings.agentEffort === 'high') return 'high'
+  if (settings.agentEffort === 'medium') return 'minimal'
+  if (settings.agentEffort === 'low') return 'off'
   // agentThinking.type === 'enabled' 是 Claude 固定 budget 模式，对应 Pi 的最小思考级别
   if (settings.agentThinking?.type === 'enabled') return 'minimal'
-  return settings.agentEffort ?? 'off'
+  return 'off'
 }
 
 const EMPTY_RESPONSE_RESULT_SUBTYPE = 'empty_response'
@@ -1238,6 +1240,11 @@ export class AgentOrchestrator {
         })
         : await (async () => {
           const piSdk = await import('@earendil-works/pi-coding-agent')
+          // Pi 内置工具桥接层：Automation 等已通过 pi-builtin-tools.ts 转化为 customTools。
+          // Pi 的 createAgentSession 不支持 mcpServers 参数，因此用户配置的 MCP 服务器
+          // （stdio/http/sse）当前无法在 Pi 运行时中使用。这属于 Pi SDK 能力限制，
+          // 待 Pi SDK 支持 MCP 后再补充。
+          // TODO: 当 Pi SDK 支持 MCP servers 时，将 mcpServers 传递给 createAgentSession。
           const result = await buildPiBuiltinTools(piSdk, {
             sessionId,
             channelId,
