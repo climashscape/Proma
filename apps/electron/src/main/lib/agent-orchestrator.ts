@@ -77,7 +77,7 @@ import { getAgentSdkMaxOutputTokens } from './agent-sdk-output-limits'
 import { resolvePiThinkingLevel } from './agent-thinking-level'
 import { resolvePiReasoningCapability } from './adapters/pi-model-registry'
 import { generateCodexTitle } from './adapters/pi-codex-title-generator'
-import { createFallbackTitle, sanitizeGeneratedTitle, TITLE_PROMPT } from './title-generation'
+import { createFallbackTitle, sanitizeGeneratedTitle, TITLE_PROMPT, MAX_TITLE_LENGTH } from './title-generation'
 
 // ===== 类型定义 =====
 
@@ -844,11 +844,11 @@ export class AgentOrchestrator {
     if (channel.provider === 'xai') {
       // xAI subscription uses Pi's provider-specific OAuth transport; title generation's
       // generic channel adapter only understands API keys, so retain a local deterministic title.
-      return createFallbackTitle(userMessage)
+      return createFallbackTitle(msg)
     }
 
     if (channel.provider === 'openai-codex') {
-      const fallbackTitle = createFallbackTitle(userMessage)
+      const fallbackTitle = createFallbackTitle(msg)
       try {
         const [credentials, proxyUrl] = await Promise.all([
           resolveCodexOAuthCredentials(channelId),
@@ -895,7 +895,7 @@ export class AgentOrchestrator {
         console.warn('[Agent 标题生成] API 未返回可用标题')
         // OpenCode Go 的推理模型可能把输出预算全花在推理上返回空正文，或
         // 内容块为数组；任何取不到可用标题的情况都回退到首行兜底，保证会话一定被重命名。
-        return channel.provider === 'opencode-go-openai' ? createFallbackTitle(userMessage) : null
+        return channel.provider === 'opencode-go-openai' ? createFallbackTitle(msg) : null
       }
 
       console.log(`[Agent 标题生成] 生成标题成功: "${result}"`)
@@ -903,7 +903,7 @@ export class AgentOrchestrator {
     } catch (error) {
       console.warn('[Agent 标题生成] 生成失败:', error)
       // OpenCode Go 的服务端偶发返回空标题/异常响应/超时，异常路径同样要完成重命名。
-      return channel.provider === 'opencode-go-openai' ? createFallbackTitle(userMessage) : null
+      return channel.provider === 'opencode-go-openai' ? createFallbackTitle(msg) : null
     }
   }
 

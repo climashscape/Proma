@@ -33,6 +33,7 @@ function UpdateCard(): React.ReactElement | null {
   const available = useAtomValue(updaterAvailableAtom)
   const status = useAtomValue(updateStatusAtom)
   const [checking, setChecking] = React.useState(false)
+  const [idleInstallScheduled, setIdleInstallScheduled] = React.useState(false)
 
   // updater 不可用时不渲染
   if (!available) return null
@@ -47,9 +48,21 @@ function UpdateCard(): React.ReactElement | null {
     }
   }
 
-  const handleQuitAndInstall = (): void => {
-    window.electronAPI.updater?.quitAndInstall()
+  const handleInstallWhenIdle = (): void => {
+    void window.electronAPI.updater?.installWhenIdle()
+      .then((scheduled) => setIdleInstallScheduled(scheduled))
+      .catch(() => setIdleInstallScheduled(false))
   }
+
+  const handleCancelIdleInstall = (): void => {
+    void window.electronAPI.updater?.cancelIdleInstall()
+      .then(() => setIdleInstallScheduled(false))
+  }
+
+  // 下载完成后默认安排空闲时更新
+  React.useEffect(() => {
+    if (status.status !== 'downloaded') setIdleInstallScheduled(false)
+  }, [status.status])
 
   const isChecking = checking || status.status === 'checking' || status.status === 'downloading'
 
@@ -62,13 +75,22 @@ function UpdateCard(): React.ReactElement | null {
 
           {/* 操作按钮 */}
           {status.status === 'downloaded' ? (
-            <button
-              onClick={handleQuitAndInstall}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-            >
-              <RotateCw className="h-3.5 w-3.5" />
-              立即重启
-            </button>
+            idleInstallScheduled ? (
+              <button
+                onClick={handleCancelIdleInstall}
+                className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors"
+              >
+                取消安排
+              </button>
+            ) : (
+              <button
+                onClick={handleInstallWhenIdle}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                空闲时更新
+              </button>
+            )
           ) : (
             <button
               onClick={handleCheck}
