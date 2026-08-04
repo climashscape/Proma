@@ -24,3 +24,29 @@ export const leftSidebarWidthAtom = atomWithStorage<number>(
   'proma-left-sidebar-width',
   300,
 )
+
+/** 被折叠的项目（工作区）ID 列表，持久化到 localStorage；保存用户的展开/折叠习惯，重启后自动恢复 */
+const collapsedWorkspaceIdsStorageAtom = atomWithStorage<string[]>(
+  'proma-collapsed-workspace-ids',
+  [],
+  undefined,
+  { getOnInit: true },
+)
+
+/** 以 Set 形式暴露折叠项目 ID；写入时自动序列化为数组持久化（本地状态默认展开 = 空集合） */
+export const collapsedWorkspaceIdsAtom = atom(
+  (get) => new Set(get(collapsedWorkspaceIdsStorageAtom)),
+  (get, set, update: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    const next =
+      typeof update === 'function'
+        ? update(new Set(get(collapsedWorkspaceIdsStorageAtom)))
+        : update
+    const nextArray = [...next]
+    // 内容无变化时跳过写入，避免 no-op 更新触发重渲染与多余 localStorage 写
+    const current = get(collapsedWorkspaceIdsStorageAtom)
+    if (current.length === nextArray.length && current.every((id, i) => id === nextArray[i])) {
+      return
+    }
+    set(collapsedWorkspaceIdsStorageAtom, nextArray)
+  },
+)
