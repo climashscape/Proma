@@ -48,6 +48,7 @@ function VersionHistorySection({
         perPage: 3,
         includePrerelease: false,
         repo,
+        forceRefresh: true,
       })
       setReleases(data)
     } catch (err) {

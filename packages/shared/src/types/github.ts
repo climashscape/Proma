@@ -52,6 +52,8 @@ export interface GitHubReleaseListOptions {
   includePrerelease?: boolean
   /** 目标仓库；缺省时使用当前构建配置的仓库 */
   repo?: GitHubRepoRef
+  /** 强制跳过缓存重新拉取（刷新按钮使用） */
+  forceRefresh?: boolean
 }
 
 /** GitHub Release 单条查询选项（最新 / 按 tag） */

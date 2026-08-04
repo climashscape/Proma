@@ -116,12 +116,13 @@ export async function listReleases(
     page = 1,
     includePrerelease = false,
     repo,
+    forceRefresh = false,
   } = options
   const key = repoKey(repo)
 
   try {
-    // 检查缓存（仅第一页）
-    if (page === 1) {
+    // 检查缓存（仅第一页；刷新时 forceRefresh 强制跳过缓存重新拉取）
+    if (page === 1 && !forceRefresh) {
       const cachedEntry = releaseCacheMap.get(key)
       if (cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL) {
         console.log(`[GitHub Release] 使用缓存的 Release 列表 (${key})`)
