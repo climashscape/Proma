@@ -37,7 +37,6 @@ import {
   agentNonGitFileChangesAtom,
   agentFileChangesCurrentRunAtom,
   fileBrowserAutoRevealAtom,
-  agentSelectedWorktreeAtom,
 } from '@/atoms/agent-atoms'
 import type { AgentSidePanelTab, AgentFileSourceFilter } from '@/atoms/agent-atoms'
 import { agentSideChatMapAtom } from '@/atoms/chat-atoms'
@@ -94,18 +93,18 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     })
   }, [sessionId, openPreview])
 
-  // Worktree 选择状态（仅用于 diff 文件点击时传递 baseRef，选取逻辑已下沉至 DiffChangesList）
-  const selectedWorktreeMap = useAtomValue(agentSelectedWorktreeAtom)
-  const selectedWorktreePath = selectedWorktreeMap.get(sessionId) ?? null
+  // Worktree / 仓库选择状态已下沉至 DiffChangesList，这里仅透传文件点击时的基准分支
 
-  const handleDiffFileClick = React.useCallback((filePath: string, _isUntracked: boolean, gitRoot?: string) => {
+  const handleDiffFileClick = React.useCallback((filePath: string, _isUntracked: boolean, gitRoot?: string, baseRef?: string) => {
+    // 仓库聚合视图 / worktree 视图展示的是相对基准分支的差异，
+    // baseRef 由 DiffChangesList 透传（服务端自动探测结果），未透传时保持默认 HEAD 对比
     openPreview(sessionId, {
       filePath,
       dirPath: sessionPath || undefined,
       gitRoot,
-      baseRef: selectedWorktreePath ? 'origin/main' : undefined,
+      baseRef,
     })
-  }, [openPreview, sessionId, sessionPath, selectedWorktreePath])
+  }, [openPreview, sessionId, sessionPath])
 
   // 动画标志：isOpen 变化时启用过渡动画，切换会话时即时显示
   const prevIsOpenRef = React.useRef(isOpen)

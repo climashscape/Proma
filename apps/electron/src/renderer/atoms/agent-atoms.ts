@@ -414,6 +414,18 @@ export const agentDiffRefreshVersionAtom = atom(new Map<string, number>())
 /** 当前会话选中的 worktree 路径，null = 默认行为（显示 session 改动） */
 export const agentSelectedWorktreeAtom = atom(new Map<string, string | null>())
 
+/** 当前会话 worktree 对比基准分支（如 "origin/main" 或另一分支名），空 = 自动探测 */
+export const agentDiffBaseBranchAtom = atom(new Map<string, string>())
+
+/** 当前会话选中的仓库根路径，null = 默认（扫描整个工作区的所有仓库） */
+export const agentSelectedRepoAtom = atom(new Map<string, string | null>())
+
+/**
+ * Repo 聚合视图数据缓存 — 按 session 隔离，存放上一次 IPC 拉取的仓库聚合变更结果。
+ * 与 agentDiffDataAtom（UnstagedChangesResult）类型不同，单独缓存避免类型混用。
+ */
+export const agentDiffRepoDataAtom = atom(new Map<string, import('@proma/shared').RepoChangesResult>())
+
 /** 是否有未查看的代码改动 — 按 session 隔离 */
 export const agentDiffUnseenChangesAtom = atom(new Map<string, boolean>())
 

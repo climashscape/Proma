@@ -189,6 +189,8 @@ export interface ElectronAPI {
 
   /** 获取未暂存的变更文件列表 */
   getUnstagedChanges: (dirPath: string, sessionPath?: string, workspaceFilesPath?: string, extraPaths?: string[], sessionId?: string) => Promise<import('@proma/shared').UnstagedChangesResult>
+  /** 使变更扫描缓存失效（可传路径做定向失效） */
+  invalidateGitDiffCache: (path?: string) => Promise<void>
   /** 获取单个文件的 diff */
   getFileDiff: (input: import('@proma/shared').GetFileDiffInput) => Promise<string>
   /** 获取未追踪文件内容 */
@@ -198,9 +200,13 @@ export interface ElectronAPI {
   /** 获取文件新旧版本内容 */
   getDiffContents: (input: import('@proma/shared').GetFileDiffInput) => Promise<{ oldContent: string; newContent: string } | null>
   /** 列出 Git Worktree */
-  listWorktrees: (repoPath: string, sessionId: string) => Promise<import('@proma/shared').WorktreeInfo[]>
+  listWorktrees: (repoPath: string, sessionId: string, force?: boolean) => Promise<import('@proma/shared').WorktreeInfo[]>
   /** 获取 Worktree 相对于基准分支的全量变更 */
   getWorktreeChanges: (worktreePath: string, baseBranch: string, sessionId: string) => Promise<import('@proma/shared').UnstagedChangesResult>
+  /** 列出扫描到的所有 Git 仓库（仓库选择器用） */
+  listRepos: (dirPath: string, sessionId?: string, force?: boolean) => Promise<import('@proma/shared').RepoInfo[]>
+  /** 获取仓库所有 worktree 的全量变更（仓库聚合视图用） */
+  getRepoChanges: (repoPath: string, baseBranch: string, sessionId: string) => Promise<import('@proma/shared').RepoChangesResult>
   /** 在独立窗口打开当前文件预览 */
   openDetachedPreview: (input: DetachedPreviewWindowInput) => Promise<string | null>
   /** 获取独立预览窗口数据 */
@@ -210,6 +216,8 @@ export interface ElectronAPI {
 
   /** 在系统默认浏览器中打开外部链接 */
   openExternal: (url: string) => Promise<void>
+  /** 打开系统目录选择对话框，返回选中路径或 null */
+  selectDirectory: () => Promise<string | null>
   /** 在系统剪贴板中写入纯文本 */
   writeClipboardText: (text: string) => Promise<void>
 
@@ -1228,6 +1236,10 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_UNSTAGED_CHANGES, dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId)
   },
 
+  invalidateGitDiffCache: (path?: string) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.INVALIDATE_GIT_DIFF_CACHE, path)
+  },
+
   getFileDiff: (input: import('@proma/shared').GetFileDiffInput) => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_FILE_DIFF, input)
   },
@@ -1244,12 +1256,20 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_DIFF_CONTENTS, input)
   },
 
-  listWorktrees: (repoPath: string, sessionId: string) => {
-    return ipcRenderer.invoke(IPC_CHANNELS.LIST_WORKTREES, repoPath, sessionId)
+  listWorktrees: (repoPath: string, sessionId: string, force?: boolean) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.LIST_WORKTREES, repoPath, sessionId, force)
   },
 
   getWorktreeChanges: (worktreePath: string, baseBranch: string, sessionId: string) => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_WORKTREE_CHANGES, worktreePath, baseBranch, sessionId)
+  },
+
+  listRepos: (dirPath: string, sessionId?: string, force?: boolean) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.LIST_REPOS, dirPath, sessionId, force)
+  },
+
+  getRepoChanges: (repoPath: string, baseBranch: string, sessionId: string) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_REPO_CHANGES, repoPath, baseBranch, sessionId)
   },
 
   openDetachedPreview: (input: DetachedPreviewWindowInput) => {
@@ -1263,6 +1283,10 @@ const electronAPI: ElectronAPI = {
   // 通用工具
   openExternal: (url: string) => {
     return ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL, url)
+  },
+
+  selectDirectory: () => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SELECT_DIRECTORY) as Promise<string | null>
   },
 
   writeClipboardText: (text: string) => {

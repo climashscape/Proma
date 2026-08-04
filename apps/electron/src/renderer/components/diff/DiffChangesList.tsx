@@ -2,17 +2,20 @@
  * DiffChangesList — 代码改动文件列表
  *
  * 显示当前工作树相对 HEAD 的代码改动，按目录分组，支持 hover 操作按钮。
+ * 同时支持「仓库选择器」：选中仓库后聚合展示该仓库所有 worktree 的变更与分支对比。
+ * 非 Git 目录下的会话文件变更（non-git）也在此展示。
  */
 
 import * as React from 'react'
-import { Box, ChevronRight, FolderSearch, Search, Undo2, X } from 'lucide-react'
+import { Box, ChevronRight, FolderSearch, GitBranch, Search, Undo2, X } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
-import { agentDiffUnseenFilesAtom, agentDiffDataAtom, agentSelectedWorktreeAtom } from '@/atoms/agent-atoms'
-import type { ChangedFileEntry, ChangedFileStatus, ChangeSource, UntrackedFileEntry, WorktreeInfo } from '@proma/shared'
+import { agentDiffUnseenFilesAtom, agentDiffDataAtom, agentDiffRepoDataAtom, agentSelectedWorktreeAtom, agentSelectedRepoAtom, agentDiffBaseBranchAtom } from '@/atoms/agent-atoms'
+import type { ChangedFileEntry, ChangedFileStatus, ChangeSource, UntrackedFileEntry, WorktreeInfo, RepoChangesResult, RepoWorktreeChanges } from '@proma/shared'
 import { WorktreeSelector } from './WorktreeSelector'
+import { RepoSelector } from './RepoSelector'
 import { groupSessionFileChanges } from '@/lib/session-file-changes'
 import type { SessionFileChange } from '@/lib/session-file-changes'
 
@@ -47,7 +50,7 @@ interface DiffChangesListProps {
   /** 工作区共享文件目录（用于 badge 计算） */
   workspaceFilesPath?: string
   /** 点击文件回调 */
-  onFileClick: (filePath: string, isUntracked: boolean, gitRoot?: string) => void
+  onFileClick: (filePath: string, isUntracked: boolean, gitRoot?: string, baseRef?: string) => void
   /** 自动刷新信号（版本号递增触发） */
   refreshVersion?: number
   /** 当前选中的文件路径（高亮显示） */
@@ -58,11 +61,11 @@ interface DiffChangesListProps {
   workspaceSlug?: string
   /** 用于自动发现 worktree 的仓库候选路径 */
   worktreeRepoPaths?: string[]
-  /** 本会话在非 Git 目录中成功写入的文件 */
+  /** 本会话的 non-git 文件变更（非 Git 目录下的会话文件） */
   nonGitFileChanges?: SessionFileChange[]
-  /** 当前 Agent run ID，用于将文件变更划分为本轮和更早 */
+  /** 当前文件变更 run id（区分本轮/更早） */
   currentFileChangeRunId?: string
-  /** 点击非 Git 文件时打开纯文件预览 */
+  /** non-git 文件点击回调 */
   onPlainFileClick?: (filePath: string) => void
 }
 
@@ -93,28 +96,62 @@ export const DiffChangesList = React.memo(function DiffChangesList({
   const selectedWorktreeMap = useAtomValue(agentSelectedWorktreeAtom)
   const setSelectedWorktreeMap = useSetAtom(agentSelectedWorktreeAtom)
   const selectedWorktreePath = selectedWorktreeMap.get(sessionId) ?? null
-  const diffCacheKey = selectedWorktreePath ? `${sessionId}:worktree:${selectedWorktreePath}` : `${sessionId}:session`
-  const worktreeMode = React.useMemo(
-    () => selectedWorktreePath ? { path: selectedWorktreePath, baseBranch: 'origin/main' } : undefined,
-    [selectedWorktreePath],
-  )
+  // 仓库选择状态（内联 RepoSelector，优先级高于 worktree）
+  const selectedRepoMap = useAtomValue(agentSelectedRepoAtom)
+  const setSelectedRepoMap = useSetAtom(agentSelectedRepoAtom)
+  const selectedRepoPath = selectedRepoMap.get(sessionId) ?? null
+  const repoMode = Boolean(selectedRepoPath)
+  // 对比基准分支（worktree A vs B）：用户显式选择，空 = 服务端自动探测
+  const baseBranchMap = useAtomValue(agentDiffBaseBranchAtom)
+  const setBaseBranchMap = useSetAtom(agentDiffBaseBranchAtom)
+  const diffBaseBranch = baseBranchMap.get(sessionId) ?? ''
+  const handleRepoSelect = React.useCallback((repo: import('@proma/shared').RepoInfo | null) => {
+    setSelectedRepoMap((prev) => {
+      const m = new Map(prev)
+      m.set(sessionId, repo?.repoPath ?? null)
+      return m
+    })
+  }, [sessionId, setSelectedRepoMap])
+
   const handleWorktreeSelect = React.useCallback((worktree: WorktreeInfo | null) => {
     setSelectedWorktreeMap((prev) => {
       const m = new Map(prev)
       m.set(sessionId, worktree?.path ?? null)
       return m
     })
-  }, [sessionId, setSelectedWorktreeMap])
+    // 切换 worktree 时清除对比基准，避免旧基准串到新 worktree
+    setBaseBranchMap((prev) => {
+      if (!prev.has(sessionId)) return prev
+      const m = new Map(prev)
+      m.delete(sessionId)
+      return m
+    })
+  }, [sessionId, setSelectedWorktreeMap, setBaseBranchMap])
 
   // Diff 数据缓存：mount 时若已有上次结果，立即用作初值，避免空数组闪 1s "没有代码改动"
   const diffDataMap = useAtomValue(agentDiffDataAtom)
   const setDiffDataMap = useSetAtom(agentDiffDataAtom)
+  // 仓库模式专用缓存（类型不同，独立 atom 避免与 UnstagedChangesResult 混用）
+  const repoDataMap = useAtomValue(agentDiffRepoDataAtom)
+  const setRepoDataMap = useSetAtom(agentDiffRepoDataAtom)
+  const diffCacheKey = repoMode
+    ? (selectedWorktreePath ? `${sessionId}:repo-wt:${selectedWorktreePath}` : `${sessionId}:repo:${selectedRepoPath}`)
+    : selectedWorktreePath ? `${sessionId}:worktree:${selectedWorktreePath}` : `${sessionId}:session`
   const cached = diffDataMap.get(diffCacheKey)
   const [files, setFiles] = React.useState<ChangedFileEntry[]>(() => cached?.files ?? [])
   const [untrackedFiles, setUntrackedFiles] = React.useState<UntrackedFileEntry[]>(() => cached?.untrackedFiles ?? [])
   const [isGitRepo, setIsGitRepo] = React.useState(() => cached?.isGitRepo ?? true)
+  // 仓库聚合模式（repoMode && 未选单 worktree）：数据在 agentDiffRepoDataAtom，与 worktree 视图分离
+  const isRepoAggregate = repoMode && !selectedWorktreePath
+  // 仓库模式：所有 worktree 的聚合变更
+  const [repoChanges, setRepoChanges] = React.useState<RepoChangesResult | null>(() => {
+    if (!isRepoAggregate) return null
+    return repoDataMap.get(diffCacheKey) ?? null
+  })
+  // 实际使用的基准分支（服务端自动探测后返回），用于文件 diff 预览对齐
+  const [worktreeBaseBranch, setWorktreeBaseBranch] = React.useState<string>('')
   /** 首次 fetch 是否已返回——区分 loading 与真·空，避免 "没有代码改动" 误闪 */
-  const [hasFetched, setHasFetched] = React.useState<boolean>(() => cached !== undefined)
+  const [hasFetched, setHasFetched] = React.useState<boolean>(() => isRepoAggregate ? repoDataMap.has(diffCacheKey) : cached !== undefined)
   const [collapsedDirs, setCollapsedDirs] = React.useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = React.useState('')
   /** 单调递增的 fetch 序号，用于丢弃乱序到达的旧响应 */
@@ -127,8 +164,11 @@ export const DiffChangesList = React.memo(function DiffChangesList({
     setFiles(nextCached?.files ?? [])
     setUntrackedFiles(nextCached?.untrackedFiles ?? [])
     setIsGitRepo(nextCached?.isGitRepo ?? true)
-    setHasFetched(nextCached !== undefined)
-  }, [diffCacheKey])
+    setHasFetched(isRepoAggregate ? repoDataMap.has(diffCacheKey) : nextCached !== undefined)
+    if (isRepoAggregate) {
+      setRepoChanges(repoDataMap.get(diffCacheKey) ?? null)
+    }
+  }, [diffCacheKey, repoMode, isRepoAggregate])
 
   // Agent 本轮刚修改但尚未查看的文件
   const unseenFilesMap = useAtomValue(agentDiffUnseenFilesAtom)
@@ -148,12 +188,40 @@ export const DiffChangesList = React.memo(function DiffChangesList({
   }, [sessionId, setUnseenFilesMap])
 
   const fetchChanges = React.useCallback(async () => {
-    if (!dirPath && !worktreeMode) return
+    if (!dirPath && !repoMode) return
     const requestId = ++fetchSeqRef.current
     try {
-      const result = worktreeMode
-        ? await window.electronAPI.getWorktreeChanges(worktreeMode.path, worktreeMode.baseBranch, sessionId)
-        : await window.electronAPI.getUnstagedChanges(dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId)
+      if (repoMode && selectedRepoPath) {
+        // 聚合视图自动探测基准；worktree 细化传用户选择的对比基准（A vs B）
+        const result = await window.electronAPI.getRepoChanges(selectedRepoPath, isRepoAggregate ? '' : diffBaseBranch, sessionId)
+        if (requestId !== fetchSeqRef.current) return
+        setIsGitRepo(result.isGitRepo)
+        if (isRepoAggregate) {
+          setRepoChanges(result)
+          setFiles([])
+          setUntrackedFiles([])
+          setRepoDataMap((prev) => {
+            const next = new Map(prev)
+            next.set(diffCacheKey, result)
+            return next
+          })
+        } else {
+          // 仓库内选中单个 worktree：从聚合结果中取出对应 worktree 的变更，放入 diffDataMap
+          const target = result.worktrees.find((w) => w.worktree.path === selectedWorktreePath)
+          const changes = target?.changes ?? { isGitRepo: false, files: [], untrackedFiles: [], gitRootNames: [] }
+          setFiles(changes.files || [])
+          setUntrackedFiles(changes.untrackedFiles || [])
+          setWorktreeBaseBranch(target?.worktree.path ? (result.baseBranch || '') : '')
+          setDiffDataMap((prev) => {
+            const next = new Map(prev)
+            next.set(diffCacheKey, changes)
+            return next
+          })
+        }
+        setHasFetched(true)
+        return
+      }
+      const result = await window.electronAPI.getUnstagedChanges(dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId)
       if (requestId !== fetchSeqRef.current) return
       setIsGitRepo(result.isGitRepo)
       setFiles(result.files || [])
@@ -169,7 +237,7 @@ export const DiffChangesList = React.memo(function DiffChangesList({
       setIsGitRepo(true)
       setHasFetched(true)
     }
-  }, [dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId, setDiffDataMap, worktreeMode, diffCacheKey])
+  }, [dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId, setDiffDataMap, setRepoDataMap, diffCacheKey, repoMode, selectedRepoPath, isRepoAggregate, diffBaseBranch])
 
   React.useEffect(() => {
     fetchChanges()
@@ -240,19 +308,44 @@ export const DiffChangesList = React.memo(function DiffChangesList({
   const hasGitChanges = isGitRepo && hasAnyChanges
   const hasNonGitFileChanges = nonGitFileChanges.length > 0
   const hasAnyVisibleChanges = hasGitChanges || hasNonGitFileChanges
-  const shouldShowSearch = isGitRepo && (hasAnyChanges || searchQuery.length > 0)
-  const shouldShowWorktreeSelector = isGitRepo && Boolean(workspaceSlug || (worktreeRepoPaths?.length ?? 0) > 0)
+  // 仓库聚合模式：搜索框基于聚合结果判断；worktree 细化/默认视图基于 files
+  const repoTotalChanges = repoChanges
+    ? repoChanges.worktrees.reduce((s, w) => s + w.changes.files.length + w.changes.untrackedFiles.length, 0)
+    : 0
+  const shouldShowSearch = isGitRepo && (isRepoAggregate
+    ? (repoTotalChanges > 0 || searchQuery.length > 0)
+    : (hasAnyChanges || searchQuery.length > 0))
+  const shouldShowWorktreeSelector = repoMode && Boolean(selectedRepoPath)
+  const shouldShowRepoSelector = (worktreeRepoPaths?.length ?? 0) > 0
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
-      {/* Worktree 分支选择器仅作用于 Git 改动。 */}
-      {shouldShowWorktreeSelector && (
+      {/* 仓库选择器 — 选择后该会话只扫描此仓库的所有 worktree */}
+      {shouldShowRepoSelector && (
+        <RepoSelector
+          sessionId={sessionId}
+          repoPaths={worktreeRepoPaths}
+          workspaceSlug={workspaceSlug || undefined}
+          selectedPath={selectedRepoPath}
+          onSelect={handleRepoSelect}
+        />
+      )}
+      {/* Worktree 过滤条 — 选中仓库后可在聚合视图与单个 worktree 之间切换 */}
+      {shouldShowWorktreeSelector && selectedRepoPath && (
         <WorktreeSelector
           sessionId={sessionId}
-          workspaceSlug={workspaceSlug}
-          repoPaths={worktreeRepoPaths}
+          repoPath={selectedRepoPath}
           selectedPath={selectedWorktreePath}
           onSelect={handleWorktreeSelect}
+          baseBranch={diffBaseBranch || undefined}
+          onBaseBranchChange={(base) => {
+            setBaseBranchMap((prev) => {
+              const m = new Map(prev)
+              if (base) m.set(sessionId, base)
+              else m.delete(sessionId)
+              return m
+            })
+          }}
         />
       )}
 
@@ -288,7 +381,8 @@ export const DiffChangesList = React.memo(function DiffChangesList({
         </div>
       )}
 
-      {hasNonGitFileChanges && (
+      {/* non-git 会话文件变更 — 仅在非仓库聚合视图显示 */}
+      {!isRepoAggregate && hasNonGitFileChanges && (
         <NonGitChangesList
           changes={nonGitFileChanges}
           currentRunId={currentFileChangeRunId}
@@ -297,71 +391,87 @@ export const DiffChangesList = React.memo(function DiffChangesList({
         />
       )}
 
-      {!hasAnyVisibleChanges && (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <p className="text-[12px] text-center">
-            {isGitRepo ? (hasFetched ? '没有文件改动' : '加载中…') : '当前目录不是 Git 仓库'}
-          </p>
-        </div>
-      )}
-      {hasGitChanges && isEmpty && (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-          <p className="text-[12px] text-center">没有匹配的代码改动</p>
-        </div>
-      )}
-      {hasGitChanges && !isEmpty && (
+      {isRepoAggregate ? (
+        <RepoChangesView
+          result={repoChanges}
+          hasFetched={hasFetched}
+          isGitRepo={isGitRepo}
+          searchQuery={searchQuery}
+          selectedFilePath={selectedFilePath}
+          unseenFiles={unseenFiles}
+          markFileAsSeen={markFileAsSeen}
+          onFileClick={onFileClick}
+          onRevert={handleRevert}
+        />
+      ) : (
         <>
-          {fileGroups.map((group) => {
-            const isCollapsed = collapsedDirs.has(group.gitRoot)
-            return (
-              <div key={group.gitRoot}>
-                {/* 文件夹 bar */}
-                <button
-                  type="button"
-                  onClick={() => toggleDir(group.gitRoot)}
-                  className="flex items-center gap-1.5 w-full px-3 py-2 text-[13px] font-medium text-foreground/60 hover:bg-foreground/[0.04] transition-colors"
-                >
-                  <ChevronRight
-                    className={cn('size-3.5 transition-transform', !isCollapsed && 'rotate-90')}
-                  />
-                  <span className="truncate">{group.dirName}</span>
-                  {/* 文件夹层级的来源 badges */}
-                  {group.sources.map((src) => {
-                    const cfg = SOURCE_CONFIG[src] ?? SOURCE_CONFIG.none!
-                    return (
-                      <span key={src} className={cn('rounded px-1 py-0.5 text-[12px] leading-none shrink-0', cfg.color)}>
-                        {cfg.label}
+          {!hasAnyVisibleChanges && (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+              <p className="text-[12px] text-center">
+                {isGitRepo ? (hasFetched ? '没有文件改动' : '加载中…') : '当前目录不是 Git 仓库'}
+              </p>
+            </div>
+          )}
+          {hasGitChanges && isEmpty && (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+              <p className="text-[12px] text-center">没有匹配的代码改动</p>
+            </div>
+          )}
+          {hasGitChanges && !isEmpty && (
+            <>
+              {fileGroups.map((group) => {
+                const isCollapsed = collapsedDirs.has(group.gitRoot)
+                return (
+                  <div key={group.gitRoot}>
+                    {/* 文件夹 bar */}
+                    <button
+                      type="button"
+                      onClick={() => toggleDir(group.gitRoot)}
+                      className="flex items-center gap-1.5 w-full px-3 py-2 text-[13px] font-medium text-foreground/60 hover:bg-foreground/[0.04] transition-colors"
+                    >
+                      <ChevronRight
+                        className={cn('size-3.5 transition-transform', !isCollapsed && 'rotate-90')}
+                      />
+                      <span className="truncate">{group.dirName}</span>
+                      {/* 文件夹层级的来源 badges */}
+                      {group.sources.map((src) => {
+                        const cfg = SOURCE_CONFIG[src] ?? SOURCE_CONFIG.none!
+                        return (
+                          <span key={src} className={cn('rounded px-1 py-0.5 text-[12px] leading-none shrink-0', cfg.color)}>
+                            {cfg.label}
+                          </span>
+                        )
+                      })}
+                      <span className="ml-auto shrink-0 flex items-center gap-1.5">
+                        <span className="text-foreground/30">{group.files.length} files</span>
+                        {group.totalAdditions > 0 && <span className="text-foreground/30">+{group.totalAdditions}</span>}
+                        {group.totalDeletions > 0 && <span className="text-foreground/30">-{group.totalDeletions}</span>}
                       </span>
-                    )
-                  })}
-                  <span className="ml-auto shrink-0 flex items-center gap-1.5">
-                    <span className="text-foreground/30">{group.files.length} files</span>
-                    {group.totalAdditions > 0 && <span className="text-foreground/30">+{group.totalAdditions}</span>}
-                    {group.totalDeletions > 0 && <span className="text-foreground/30">-{group.totalDeletions}</span>}
-                  </span>
-                </button>
+                    </button>
 
-                {/* 文件列表 */}
-                {!isCollapsed && group.files.map((file) => {
-                  const absPath = `${file.gitRoot || dirPath}/${file.filePath}`.replace(/\/+/g, '/')
-                  return (
-                    <FileRow
-                      key={`${file.gitRoot}:${file.filePath}`}
-                      file={file}
-                      isSelected={absPath === selectedFilePath || file.filePath === selectedFilePath}
-                      isUnseen={unseenFiles.has(absPath)}
-                      onClick={() => {
-                        markFileAsSeen(absPath)
-                        onFileClick(file.filePath, file.status === 'untracked', file.gitRoot)
-                      }}
-                      onRevert={file.status === 'untracked' ? undefined : () => handleRevert(file.filePath, file.gitRoot)}
-                      dirPath={dirPath}
-                    />
-                  )
-                })}
-              </div>
-            )
-          })}
+                    {/* 文件列表 */}
+                    {!isCollapsed && group.files.map((file) => {
+                      const absPath = `${file.gitRoot || dirPath}/${file.filePath}`.replace(/\/+/g, '/')
+                      return (
+                        <FileRow
+                          key={`${file.gitRoot}:${file.filePath}`}
+                          file={file}
+                          isSelected={absPath === selectedFilePath || file.filePath === selectedFilePath}
+                          isUnseen={unseenFiles.has(absPath)}
+                          onClick={() => {
+                            markFileAsSeen(absPath)
+                            onFileClick(file.filePath, file.status === 'untracked', file.gitRoot, worktreeBaseBranch || undefined)
+                          }}
+                          onRevert={file.status === 'untracked' ? undefined : () => handleRevert(file.filePath, file.gitRoot)}
+                          dirPath={dirPath}
+                        />
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </>
+          )}
         </>
       )}
     </div>
@@ -585,5 +695,201 @@ function GitStatusMarker({
       </TooltipTrigger>
       <TooltipContent side="bottom">{description}</TooltipContent>
     </Tooltip>
+  )
+}
+
+interface RepoChangesViewProps {
+  result: RepoChangesResult | null
+  hasFetched: boolean
+  isGitRepo: boolean
+  searchQuery: string
+  selectedFilePath?: string
+  unseenFiles: Set<string>
+  markFileAsSeen: (filePath: string) => void
+  onFileClick: (filePath: string, isUntracked: boolean, gitRoot?: string, baseRef?: string) => void
+  onRevert: (filePath: string, gitRoot: string) => void
+}
+
+/**
+ * 仓库聚合视图 — 展示所选仓库所有 worktree 的变更（含领先分支的 commit 概览）。
+ *
+ * 每个 worktree 是一个可折叠分组：标题为分支名 + head + 统计，
+ * 展开后依次是领先 commit 列表、基准独有 commit、已追踪文件、未追踪文件。
+ */
+function RepoChangesView({
+  result,
+  hasFetched,
+  isGitRepo,
+  searchQuery,
+  selectedFilePath,
+  unseenFiles,
+  markFileAsSeen,
+  onFileClick,
+  onRevert,
+}: RepoChangesViewProps): React.ReactElement {
+  const [collapsedWorktrees, setCollapsedWorktrees] = React.useState<Set<string>>(new Set())
+  const toggleWorktree = React.useCallback((key: string) => {
+    setCollapsedWorktrees((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const q = searchQuery.toLowerCase().trim()
+
+  if (!isGitRepo) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+        <p className="text-[12px] text-center">当前目录不是 Git 仓库</p>
+      </div>
+    )
+  }
+
+  if (!result || result.worktrees.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+        <p className="text-[12px] text-center">{hasFetched ? '没有代码改动' : '加载中…'}</p>
+      </div>
+    )
+  }
+
+  const totalChanges = result.worktrees.reduce(
+    (sum, w) => sum + w.changes.files.length + w.changes.untrackedFiles.length,
+    0,
+  )
+  const totalCommits = result.worktrees.reduce((sum, w) => sum + w.commits.length + w.trailingCommits.length, 0)
+  if (totalChanges === 0 && totalCommits === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+        <p className="text-[12px] text-center">{hasFetched ? '没有代码改动' : '加载中…'}</p>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {result.worktrees.map((w: RepoWorktreeChanges) => {
+        const changes = w.changes
+        const key = w.worktree.path
+        const isCollapsed = collapsedWorktrees.has(key)
+        const files = changes.files.filter((f) => !q || f.filePath.toLowerCase().includes(q))
+        const untracked = changes.untrackedFiles.filter((f) => !q || f.filePath.toLowerCase().includes(q))
+        const totalAdd = files.reduce((s, f) => s + f.additions, 0)
+        const totalDel = files.reduce((s, f) => s + f.deletions, 0)
+        const hasContent = files.length > 0 || untracked.length > 0 || w.commits.length > 0 || w.trailingCommits.length > 0
+        if (!hasContent) return null
+        return (
+          <div key={key}>
+            {/* worktree 标题 bar */}
+            <button
+              type="button"
+              onClick={() => toggleWorktree(key)}
+              aria-expanded={!isCollapsed}
+              className="flex items-center gap-1.5 w-full px-2 py-2 text-[13px] font-medium text-foreground/60 hover:bg-foreground/[0.04] transition-colors"
+            >
+              <ChevronRight
+                className={cn('size-3 shrink-0 transition-transform', !isCollapsed && 'rotate-90')}
+              />
+              <GitBranch className="size-3 shrink-0" />
+              <span className="truncate">{w.worktree.branch}</span>
+              {w.worktree.isMain && (
+                <span className="text-[10px] px-1 rounded bg-muted text-muted-foreground shrink-0">main</span>
+              )}
+              <span className="text-[10px] text-muted-foreground/50 shrink-0">{w.worktree.head}</span>
+              {w.commits.length > 0 && (
+                <span className="text-[10px] px-1 rounded bg-blue-500/10 text-blue-500 shrink-0">
+                  +{w.commits.length}
+                </span>
+              )}
+              {w.trailingCommits.length > 0 && (
+                <span className="text-[10px] px-1 rounded bg-amber-500/10 text-amber-500 shrink-0" title={`${result?.baseBranch || '基准'} 独有 ${w.trailingCommits.length} commits`}>
+                  -{w.trailingCommits.length}
+                </span>
+              )}
+              <span className="ml-auto shrink-0 flex items-center gap-1.5 text-foreground/30">
+                <span>{files.length + untracked.length} 文件</span>
+                {totalAdd > 0 && <span>+{totalAdd}</span>}
+                {totalDel > 0 && <span>-{totalDel}</span>}
+              </span>
+            </button>
+
+            {!isCollapsed && (
+              <>
+                {/* 领先基准分支的 commit 概览（graph 摘要） */}
+                {w.commits.length > 0 && (
+                  <div className="px-3 py-1 border-l-2 border-border/40 ml-3 flex flex-col gap-1 bg-muted/20">
+                    <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">
+                      领先 {result?.baseBranch || '基准'} · {w.commits.length} commits
+                    </div>
+                    {w.commits.map((c) => (
+                      <div key={c.hash} className="flex items-center gap-1.5 text-[11px] text-muted-foreground min-w-0">
+                        <span className="text-foreground/40 font-mono tabular-nums shrink-0">{c.hash}</span>
+                        <span className="truncate">{c.subject}</span>
+                        <span className="text-foreground/25 shrink-0 hidden min-[360px]:inline">
+                          {c.author} · {c.date}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 基准分支独有、该 worktree 没有的 commit（对比基准时区分选择效果） */}
+                {w.trailingCommits.length > 0 && (
+                  <div className="px-3 py-1 border-l-2 border-amber-500/30 ml-3 flex flex-col gap-1 bg-amber-500/[0.04]">
+                    <div className="text-[10px] font-medium text-amber-600/70 dark:text-amber-500/70 uppercase tracking-wider">
+                      {result?.baseBranch || '基准'} 独有 · {w.trailingCommits.length} commits
+                    </div>
+                    {w.trailingCommits.map((c) => (
+                      <div key={c.hash} className="flex items-center gap-1.5 text-[11px] text-muted-foreground min-w-0">
+                        <span className="text-foreground/40 font-mono tabular-nums shrink-0">{c.hash}</span>
+                        <span className="truncate">{c.subject}</span>
+                        <span className="text-foreground/25 shrink-0 hidden min-[360px]:inline">
+                          {c.author} · {c.date}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 已追踪文件 */}
+                {files.map((file) => {
+                  const absPath = `${file.gitRoot || w.worktree.path}/${file.filePath}`.replace(/\/+/g, '/')
+                  return (
+                    <FileRow
+                      key={`${file.gitRoot}:${file.filePath}`}
+                      file={file}
+                      isSelected={absPath === selectedFilePath || file.filePath === selectedFilePath}
+                      isUnseen={unseenFiles.has(absPath)}
+                      onClick={() => { markFileAsSeen(absPath); onFileClick(file.filePath, false, file.gitRoot, result?.baseBranch || undefined) }}
+                      onRevert={() => onRevert(file.filePath, file.gitRoot)}
+                      dirPath={w.worktree.path}
+                    />
+                  )
+                })}
+
+                {/* 未追踪文件 */}
+                {untracked.length > 0 && (
+                  <div>
+                    <div className="flex items-center px-3 py-1.5 text-[12px] font-medium text-muted-foreground border-t border-border/30">
+                      未追踪文件
+                    </div>
+                    {untracked.map((file) => (
+                      <FileRow
+                        key={`${file.gitRoot}:${file.filePath}`}
+                        file={{ ...file, status: 'untracked', additions: 0, deletions: 0 }}
+                        onClick={() => onFileClick(file.filePath, true, file.gitRoot, result?.baseBranch || undefined)}
+                        dirPath={w.worktree.path}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )
+      })}
+    </>
   )
 }

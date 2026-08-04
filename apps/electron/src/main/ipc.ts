@@ -138,7 +138,7 @@ import type {
 } from '@proma/shared'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
-import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents, listWorktrees, getWorktreeChanges, getMainRepoRoot } from './lib/git-diff-service'
+import { getUnstagedChanges, invalidateGitDiffCache, getFileDiff, getUntrackedContent, revertFile, getDiffContents, listWorktrees, getWorktreeChanges, getMainRepoRoot, listRepos, getRepoChanges } from './lib/git-diff-service'
 import { registerPromaFilePath } from './lib/local-file-protocol'
 import { registerUpdaterIpc } from './lib/updater/updater-ipc'
 import {
@@ -967,6 +967,15 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 使变更扫描缓存失效：agent 写文件 / git 变更完成后由渲染层调用，
+  // 保证下次 getUnstagedChanges 重新扫描并返回最新结果。可传 writtenPath 定向失效。
+  ipcMain.handle(
+    IPC_CHANNELS.INVALIDATE_GIT_DIFF_CACHE,
+    async (_, writtenPath?: string): Promise<void> => {
+      invalidateGitDiffCache(writtenPath)
+    }
+  )
+
   // 获取单个文件的 diff
   ipcMain.handle(
     IPC_CHANNELS.GET_FILE_DIFF,
@@ -1009,6 +1018,9 @@ export function registerIpcHandlers(): void {
       const access = normalizeFileAccessOptions({ sessionId })
       if (!(await ensurePathAllowedWithWorktree(dirPath, access)) || (gitRoot && !(await ensurePathAllowedWithWorktree(gitRoot, access)))) return
       await revertFile(dirPath, filePath, gitRoot)
+      // 还原会改变工作树，定向失效该文件所在仓库的变更扫描缓存。
+      // filePath 是 repo 根相对路径，必须用 gitRoot 拼绝对路径才能命中定向匹配。
+      invalidateGitDiffCache(gitRoot ? join(gitRoot, filePath) : filePath)
     }
   )
 
@@ -1030,9 +1042,9 @@ export function registerIpcHandlers(): void {
   // 列出 Git Worktree（只读取 worktree 元信息，不涉及文件内容，跳过路径安全检查）
   ipcMain.handle(
     IPC_CHANNELS.LIST_WORKTREES,
-    async (_, repoPath: string, _sessionId: string) => {
+    async (_, repoPath: string, _sessionId: string, force?: boolean) => {
       if (!repoPath || typeof repoPath !== 'string') return []
-      return await listWorktrees(repoPath)
+      return await listWorktrees(repoPath, force === true)
     }
   )
 
@@ -1047,7 +1059,53 @@ export function registerIpcHandlers(): void {
       if (!(await ensurePathAllowedWithWorktree(worktreePath, access))) {
         return { isGitRepo: false, files: [], untrackedFiles: [], gitRootNames: [] }
       }
-      return getWorktreeChanges(worktreePath, baseBranch)
+      // baseBranch 为空时服务端自动探测（origin/main → origin/master → …）
+      return getWorktreeChanges(worktreePath, baseBranch || undefined)
+    }
+  )
+
+  // 列出扫描到的所有 Git 仓库（仓库选择器用）
+  ipcMain.handle(
+    IPC_CHANNELS.LIST_REPOS,
+    async (_, dirPath: string, sessionId?: string, force?: boolean) => {
+      if (!dirPath || typeof dirPath !== 'string') return []
+      const access = normalizeFileAccessOptions({ sessionId })
+      if (!(await ensurePathAllowed(dirPath, access))) return []
+      return listRepos(dirPath, { force })
+    }
+  )
+
+  // 获取仓库所有 worktree 的全量变更（仓库聚合视图用）
+  ipcMain.handle(
+    IPC_CHANNELS.GET_REPO_CHANGES,
+    async (_, repoPath: string, baseBranch: string, sessionId: string) => {
+      if (!repoPath || typeof repoPath !== 'string') {
+        return { isGitRepo: false, repoPath: '', baseBranch: '', worktrees: [] }
+      }
+      const access = normalizeFileAccessOptions({ sessionId })
+      if (!(await ensurePathAllowedWithWorktree(repoPath, access))) {
+        return { isGitRepo: false, repoPath, baseBranch: '', worktrees: [] }
+      }
+      // 防御纵深：worktree 元数据可能指向未授权目录，逐 worktree 校验后再收集；
+      // baseBranch 为空时服务端自动探测（origin/main → origin/master → …）
+      return getRepoChanges(repoPath, baseBranch || undefined, {
+        isPathAllowed: (p) => ensurePathAllowedWithWorktree(p, access),
+        sessionId,
+      })
+    }
+  )
+
+  // 打开系统目录选择对话框（手动添加仓库用；Electron 不支持 window.prompt）
+  ipcMain.handle(
+    IPC_CHANNELS.SELECT_DIRECTORY,
+    async (event): Promise<string | null> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const options: Electron.OpenDialogOptions = {
+        title: '选择 Git 仓库根目录',
+        properties: ['openDirectory', 'promptToCreate'],
+      }
+      const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]!
     }
   )
 

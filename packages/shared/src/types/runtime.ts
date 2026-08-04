@@ -136,6 +136,8 @@ export interface UnstagedChangesResult {
   untrackedFiles: UntrackedFileEntry[]
   /** Git 仓库根目录名数组（多仓库场景用于分组显示） */
   gitRootNames: string[]
+  /** 实际使用的基准分支（自动探测后返回给前端，用于 diff 预览对齐） */
+  baseBranch?: string
 }
 
 /** Git Worktree 信息 */
@@ -150,6 +152,58 @@ export interface WorktreeInfo {
   isMain: boolean
   /** 显示名（路径最后一段） */
   name: string
+}
+
+/** Git 仓库概览信息（仓库选择器用） */
+export interface RepoInfo {
+  /** 仓库根绝对路径（主 worktree 路径） */
+  repoPath: string
+  /** 显示名（路径最后一段） */
+  name: string
+  /** 当前分支名（主 worktree） */
+  branch: string
+  /** HEAD commit hash (short) */
+  head: string
+  /** 该仓库所有 worktree 数量（含主 worktree） */
+  worktreeCount: number
+  /** 该仓库所有 worktree（含主 worktree） */
+  worktrees: WorktreeInfo[]
+}
+
+/** commit 摘要（graph 概览用） */
+export interface CommitSummary {
+  /** 短 hash */
+  hash: string
+  /** commit 主题 */
+  subject: string
+  /** 作者名 */
+  author: string
+  /** 日期（YYYY-MM-DD） */
+  date: string
+}
+
+/** 单个 worktree 的变更汇总（仓库聚合视图用） */
+export interface RepoWorktreeChanges {
+  /** worktree 信息 */
+  worktree: WorktreeInfo
+  /** 该 worktree 相对基准分支的全量变更 */
+  changes: UnstagedChangesResult
+  /** 领先基准分支的 commit 摘要（git log base..HEAD） */
+  commits: CommitSummary[]
+  /** 基准分支独有、该 worktree 没有的 commit 摘要（git log HEAD..base） */
+  trailingCommits: CommitSummary[]
+}
+
+/** 仓库全量变更结果：该仓库所有 worktree 的变更 */
+export interface RepoChangesResult {
+  /** 是否为 Git 仓库 */
+  isGitRepo: boolean
+  /** 仓库根绝对路径 */
+  repoPath: string
+  /** 基准分支（默认 origin/main） */
+  baseBranch: string
+  /** 按 worktree 分组的变更列表（含主 worktree） */
+  worktrees: RepoWorktreeChanges[]
 }
 
 /** 获取文件 Diff 的输入 */
@@ -346,6 +400,8 @@ export const IPC_CHANNELS = {
   GET_GIT_REPO_STATUS: 'git:get-repo-status',
   /** 获取未暂存的变更文件列表 */
   GET_UNSTAGED_CHANGES: 'git:get-unstaged-changes',
+  /** 使变更扫描缓存失效（agent 写文件 / git 变更完成后调用，保证下次读取拿到最新结果） */
+  INVALIDATE_GIT_DIFF_CACHE: 'git:invalidate-diff-cache',
   /** 获取单个文件的 diff */
   GET_FILE_DIFF: 'git:get-file-diff',
   /** 获取未追踪文件内容 */
@@ -357,6 +413,12 @@ export const IPC_CHANNELS = {
   LIST_WORKTREES: 'git:list-worktrees',
   /** 获取 Worktree 相对于基准分支的全量变更 */
   GET_WORKTREE_CHANGES: 'git:get-worktree-changes',
+  /** 列出扫描到的所有 Git 仓库（仓库选择器用） */
+  LIST_REPOS: 'git:list-repos',
+  /** 获取仓库所有 worktree 的全量变更（仓库聚合视图用） */
+  GET_REPO_CHANGES: 'git:get-repo-changes',
+  /** 打开系统目录选择对话框（手动添加仓库用） */
+  SELECT_DIRECTORY: 'shell:select-directory',
   /** 在系统默认浏览器中打开外部链接 */
   OPEN_EXTERNAL: 'shell:open-external',
   /** 用系统默认应用打开任意文件 */
