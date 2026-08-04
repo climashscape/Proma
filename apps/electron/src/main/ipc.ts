@@ -138,7 +138,7 @@ import type {
 } from '@proma/shared'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
-import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents, listWorktrees, getWorktreeChanges, getMainRepoRoot } from './lib/git-diff-service'
+import { getUnstagedChanges, invalidateGitDiffCache, getFileDiff, getUntrackedContent, revertFile, getDiffContents, listWorktrees, getWorktreeChanges, getMainRepoRoot } from './lib/git-diff-service'
 import { registerPromaFilePath } from './lib/local-file-protocol'
 import { registerUpdaterIpc } from './lib/updater/updater-ipc'
 import {
@@ -967,6 +967,15 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 使变更扫描缓存失效：agent 写文件 / git 变更完成后由渲染层调用，
+  // 保证下次 getUnstagedChanges 重新扫描并返回最新结果。可传 writtenPath 定向失效。
+  ipcMain.handle(
+    IPC_CHANNELS.INVALIDATE_GIT_DIFF_CACHE,
+    async (_, writtenPath?: string): Promise<void> => {
+      invalidateGitDiffCache(writtenPath)
+    }
+  )
+
   // 获取单个文件的 diff
   ipcMain.handle(
     IPC_CHANNELS.GET_FILE_DIFF,
@@ -1009,6 +1018,9 @@ export function registerIpcHandlers(): void {
       const access = normalizeFileAccessOptions({ sessionId })
       if (!(await ensurePathAllowedWithWorktree(dirPath, access)) || (gitRoot && !(await ensurePathAllowedWithWorktree(gitRoot, access)))) return
       await revertFile(dirPath, filePath, gitRoot)
+      // 还原会改变工作树，定向失效该文件所在仓库的变更扫描缓存。
+      // filePath 是 repo 根相对路径，必须用 gitRoot 拼绝对路径才能命中定向匹配。
+      invalidateGitDiffCache(gitRoot ? join(gitRoot, filePath) : filePath)
     }
   )
 

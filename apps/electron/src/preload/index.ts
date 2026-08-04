@@ -189,6 +189,8 @@ export interface ElectronAPI {
 
   /** 获取未暂存的变更文件列表 */
   getUnstagedChanges: (dirPath: string, sessionPath?: string, workspaceFilesPath?: string, extraPaths?: string[], sessionId?: string) => Promise<import('@proma/shared').UnstagedChangesResult>
+  /** 使变更扫描缓存失效（可传路径做定向失效） */
+  invalidateGitDiffCache: (path?: string) => Promise<void>
   /** 获取单个文件的 diff */
   getFileDiff: (input: import('@proma/shared').GetFileDiffInput) => Promise<string>
   /** 获取未追踪文件内容 */
@@ -1226,6 +1228,10 @@ const electronAPI: ElectronAPI = {
 
   getUnstagedChanges: (dirPath: string, sessionPath?: string, workspaceFilesPath?: string, extraPaths?: string[], sessionId?: string) => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_UNSTAGED_CHANGES, dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId)
+  },
+
+  invalidateGitDiffCache: (path?: string) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.INVALIDATE_GIT_DIFF_CACHE, path)
   },
 
   getFileDiff: (input: import('@proma/shared').GetFileDiffInput) => {

@@ -919,6 +919,11 @@ export function useGlobalAgentListeners(): void {
               const entry = pendingWriteTools.get(event.toolUseId)!
               const writtenPath = entry.path
               pendingWriteTools.delete(event.toolUseId)
+              // 定向失效主进程变更扫描缓存：只失效该文件所在仓库的缓存，
+              // 避免 Agent 连续写文件时每次都全量失效→全量重扫（CPU 飙升主因）。
+              window.electronAPI.invalidateGitDiffCache(writtenPath || undefined).catch((err) => {
+                console.warn('[GlobalAgentListeners] 失效变更扫描缓存失败:', err)
+              })
               store.set(agentDiffRefreshVersionAtom, (prev) => {
                 const m = new Map(prev); m.set(sessionId, (prev.get(sessionId) ?? 0) + 1); return m
               })
@@ -943,6 +948,10 @@ export function useGlobalAgentListeners(): void {
             // Bash git 突变命令完成时，仅刷新 diff 列表（不标记 unseen，避免红点）
             if (pendingGitMutateTools.has(event.toolUseId)) {
               pendingGitMutateTools.delete(event.toolUseId)
+              // 失效主进程变更扫描缓存（commit/checkout/reset 等会改变变更集）
+              window.electronAPI.invalidateGitDiffCache().catch((err) => {
+                console.warn('[GlobalAgentListeners] 失效变更扫描缓存失败:', err)
+              })
               store.set(agentDiffRefreshVersionAtom, (prev) => {
                 const m = new Map(prev); m.set(sessionId, (prev.get(sessionId) ?? 0) + 1); return m
               })
@@ -1388,6 +1397,17 @@ export function useGlobalAgentListeners(): void {
 
         if (prevHash === undefined || prevHash !== hash) {
           // 首次建立 hash 基准时也刷新一次，避免用户离开窗口后首次外部修改被吞掉。
+          // 内容确实变化时定向失效该文件所在仓库的变更扫描缓存，避免聚焦刷新命中 TTL 内旧缓存显示过期变更集。
+          // filePath 可能是 repo 根相对路径（如 apps/electron/src/x.ts），用 gitRoot 拼绝对路径
+          // 才能命中主进程的定向匹配，否则会退化到全量失效（正确但性能打折）。
+          const filePathRaw = previewFile.filePath
+          const invalidatePath =
+            previewFile.gitRoot && filePathRaw && !isAbsolutePath(filePathRaw)
+              ? previewFile.gitRoot.replace(/\\/g, '/').replace(/\/+$/, '') + '/' + filePathRaw.replace(/\\/g, '/')
+              : filePathRaw
+          window.electronAPI.invalidateGitDiffCache(invalidatePath).catch((err) => {
+            console.warn('[GlobalAgentListeners] 失效变更扫描缓存失败:', err)
+          })
           bumpDiffRefresh(activeSessionId)
         }
         fileContentHashMap.set(hashKey, hash)
