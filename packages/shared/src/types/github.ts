@@ -2,6 +2,24 @@
  * GitHub Release 相关类型定义
  */
 
+/** GitHub 仓库引用 */
+export interface GitHubRepoRef {
+  owner: string
+  repo: string
+}
+
+/** 官方开源仓库（proma-ai/Proma） */
+export const OFFICIAL_GITHUB_REPO: GitHubRepoRef = {
+  owner: 'proma-ai',
+  repo: 'Proma',
+}
+
+/** Ch'iVerve 专用构建发布仓库（自动更新源） */
+export const CHIVERVE_GITHUB_REPO: GitHubRepoRef = {
+  owner: 'climashscape',
+  repo: 'Proma',
+}
+
 /** GitHub Release 资源（简化版） */
 export interface GitHubRelease {
   /** Release ID */
@@ -32,6 +50,8 @@ export interface GitHubReleaseListOptions {
   page?: number
   /** 是否包含草稿和预发布版本（默认 false） */
   includePrerelease?: boolean
+  /** 目标仓库；缺省时使用当前构建配置的仓库 */
+  repo?: GitHubRepoRef
 }
 
 /** GitHub Release IPC 通道常量 */

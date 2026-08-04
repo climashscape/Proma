@@ -1,19 +1,38 @@
 /**
  * VersionHistory - 版本历史组件
  *
- * 显示 GitHub Release 历史版本列表
+ * 显示 GitHub Release 历史版本列表，拆分为两个独立区块：
+ * - Ch'iVerve 版本历史（climashscape/Proma，专用构建/自动更新源）
+ * - 官方版本历史（proma-ai/Proma，开源版）
  */
 
 import * as React from 'react'
-import type { GitHubRelease } from '@proma/shared'
+import type { GitHubRelease, GitHubRepoRef } from '@proma/shared'
+import { CHIVERVE_GITHUB_REPO, OFFICIAL_GITHUB_REPO } from '@proma/shared'
 import { RefreshCw, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import { ReleaseNotesViewer } from './ReleaseNotesViewer'
 import { SettingsCard } from './primitives'
 
+interface VersionHistorySectionProps {
+  /** 区块标题 */
+  title: string
+  /** 副标题（仓库说明） */
+  subtitle: string
+  /** 目标仓库 */
+  repo: GitHubRepoRef
+  /** 第一个（最新）release 的徽标文案 */
+  latestBadge: string
+}
+
 /**
- * VersionHistory 组件
+ * 单个版本历史区块：独立加载 / 刷新 / 展开
  */
-export function VersionHistory(): React.ReactElement {
+function VersionHistorySection({
+  title,
+  subtitle,
+  repo,
+  latestBadge,
+}: VersionHistorySectionProps): React.ReactElement {
   const [releases, setReleases] = React.useState<GitHubRelease[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -28,10 +47,11 @@ export function VersionHistory(): React.ReactElement {
       const data = await window.electronAPI.listReleases({
         perPage: 3,
         includePrerelease: false,
+        repo,
       })
       setReleases(data)
     } catch (err) {
-      console.error('[版本历史] 加载失败:', err)
+      console.error(`[版本历史] ${title} 加载失败:`, err)
       let errorMessage = err instanceof Error ? err.message : '加载失败'
       // 过滤掉 Electron IPC 的英文前缀，只保留中文错误信息
       // IPC 错误格式: "Error invoking remote method 'xxx': Error: 中文错误信息"
@@ -43,7 +63,7 @@ export function VersionHistory(): React.ReactElement {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [repo, title])
 
   // 初始加载
   React.useEffect(() => {
@@ -68,7 +88,10 @@ export function VersionHistory(): React.ReactElement {
       {/* 标题栏 */}
       <div className="p-4 border-b">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">版本历史</h3>
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium">{title}</h3>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">{subtitle}</p>
+          </div>
           <button
             onClick={loadReleases}
             disabled={loading}
@@ -120,7 +143,7 @@ export function VersionHistory(): React.ReactElement {
                         </span>
                         {isLatest && (
                           <span className="text-xs text-primary font-medium">
-                            最新
+                            {latestBadge}
                           </span>
                         )}
                       </div>
@@ -157,5 +180,27 @@ export function VersionHistory(): React.ReactElement {
         )}
       </div>
     </SettingsCard>
+  )
+}
+
+/**
+ * VersionHistory 组件
+ */
+export function VersionHistory(): React.ReactElement {
+  return (
+    <div className="space-y-4">
+      <VersionHistorySection
+        title="Ch'iVerve 版本历史"
+        subtitle="climashscape/Proma · 专用构建"
+        repo={CHIVERVE_GITHUB_REPO}
+        latestBadge="最新"
+      />
+      <VersionHistorySection
+        title="官方版本历史"
+        subtitle="proma-ai/Proma · 开源版"
+        repo={OFFICIAL_GITHUB_REPO}
+        latestBadge="官方最新"
+      />
+    </div>
   )
 }
