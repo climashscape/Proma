@@ -238,6 +238,7 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
             <SettingsPanel onClose={() => setSettingsOpen(false)} />
           </div>
         )}
+
       </div>
     </AppShellProvider>
   )
