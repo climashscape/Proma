@@ -10,6 +10,7 @@ import { BrowserWindow, app } from 'electron'
 import type { UpdateStatus } from './updater-types'
 import { UPDATER_IPC_CHANNELS } from './updater-types'
 import { createIdleInstallScheduler } from './idle-install-scheduler'
+import { ParallelDownloadExecutor } from './parallel-download-executor'
 
 /** 当前更新状态 */
 let currentStatus: UpdateStatus = { status: 'idle' }
@@ -164,6 +165,12 @@ export function initAutoUpdater(mainWindow: BrowserWindow): void {
   // 自动下载，但不在用户正常退出时自动安装，避免重启应用后被动进入更新流程。
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = false
+
+  // 注入并行分块下载器：全量下载改为 N 段并行（仅当服务端支持 Range），
+  // 差分下载走 downloadToBuffer 不受影响；不支持 Range 自动回退单连接。
+  ;(autoUpdater as unknown as { httpExecutor: unknown }).httpExecutor = new ParallelDownloadExecutor(
+    (authInfo, callback) => autoUpdater.emit('login', authInfo, callback),
+  )
 
   // 监听更新事件
   autoUpdater.on('checking-for-update', () => {
