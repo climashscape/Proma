@@ -11,16 +11,21 @@ import { createPortal } from 'react-dom'
 import { useAtomValue } from 'jotai'
 import { FileText, StickyNote, X, Clock, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { TabType, TabMinimapItem } from '@/atoms/tab-atoms'
+import type { TabType, TabMinimapItem, TabStreamRunData } from '@/atoms/tab-atoms'
 import type { SessionIndicatorStatus } from '@/atoms/agent-atoms'
+import { agentSessionStreamingStateAtomFamily, agentSessionLiveMessagesAtomFamily } from '@/atoms/agent-atoms'
+import { conversationStreamingStateAtomFamily } from '@/atoms/chat-atoms'
 import { tabMinimapCacheAtom } from '@/atoms/tab-atoms'
 import { interfaceVariantAtom } from '@/atoms/theme'
 import { Spinner } from '@/components/ui/spinner'
 import { TabPreviewPanel } from './TabPreviewPanel'
+import type { ChatToolActivity } from '@proma/shared'
 
 export interface TabBarItemProps {
   id: string
   type: TabType
+  /** 该 Tab 所属会话 ID（preview Tab 为 owner agent sessionId） */
+  sessionId: string
   title: string
   workspaceName?: string
   isActive: boolean
@@ -52,6 +57,7 @@ export interface TabBarItemProps {
 export function TabBarItem({
   id,
   type,
+  sessionId,
   title,
   workspaceName,
   isActive,
@@ -75,6 +81,47 @@ export function TabBarItem({
   const minimapCache = useAtomValue(tabMinimapCacheAtom)
   const interfaceVariant = useAtomValue(interfaceVariantAtom)
   const isClassic = interfaceVariant === 'classic'
+
+  // 订阅该 Tab 所属会话的实时流式状态（按 sessionId 切片，避免整树重渲染）
+  const agentStream = useAtomValue(agentSessionStreamingStateAtomFamily(sessionId))
+  const chatStream = useAtomValue(conversationStreamingStateAtomFamily(sessionId))
+  // Agent 会话的实时 SDKMessage 流（完整会话流数据源）
+  const liveAgentMessages = useAtomValue(agentSessionLiveMessagesAtomFamily(sessionId))
+
+  // 组装 Tab 预览面板用的会话流运行数据（仅运行中返回，否则保持 null）
+  const streamRun = React.useMemo<TabStreamRunData | null>(() => {
+    if (type === 'agent' || type === 'preview') {
+      if (!agentStream?.running) return null
+      return {
+        kind: 'agent',
+        running: true,
+        content: agentStream.content ?? '',
+        model: agentStream.model,
+        startedAt: agentStream.startedAt,
+        liveMessages: liveAgentMessages,
+        activities: agentStream.toolActivities.map((ta) => ({
+          id: ta.toolUseId,
+          toolName: ta.toolName,
+          input: ta.input,
+          done: ta.done,
+          isError: ta.isError,
+        })),
+      }
+    }
+    if (type === 'chat') {
+      if (!chatStream?.streaming) return null
+      return {
+        kind: 'chat',
+        running: true,
+        content: chatStream.content ?? '',
+        reasoning: chatStream.reasoning ?? '',
+        model: chatStream.model,
+        startedAt: chatStream.startedAt,
+        activities: mergeChatActivities(chatStream.toolActivities),
+      }
+    }
+    return null
+  }, [type, agentStream, chatStream, liveAgentMessages])
 
   React.useEffect(() => {
     const el = buttonRef.current
@@ -218,6 +265,7 @@ export function TabBarItem({
           buttonRef={buttonRef}
           title={title}
           items={previewItems}
+          streamRun={streamRun}
           isLeaving={isLeaving}
           onMouseEnter={onPanelHoverEnter}
           onMouseLeave={onPanelHoverLeave}
@@ -232,6 +280,7 @@ function TabPreviewDropdown({
   buttonRef,
   title,
   items,
+  streamRun,
   isLeaving,
   onMouseEnter,
   onMouseLeave,
@@ -239,6 +288,7 @@ function TabPreviewDropdown({
   buttonRef: React.RefObject<HTMLButtonElement | null>
   title: string
   items: TabMinimapItem[]
+  streamRun: TabStreamRunData | null
   isLeaving: boolean
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -271,8 +321,36 @@ function TabPreviewDropdown({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <TabPreviewPanel title={title} items={items} isLeaving={isLeaving} />
+      <TabPreviewPanel title={title} items={items} streamRun={streamRun} isLeaving={isLeaving} />
     </div>,
     document.body
   )
+}
+
+/**
+ * 合并 Chat 模式的 start/result 工具活动事件为统一的活动列表
+ * （与 ChatToolActivityIndicator 合并逻辑一致）
+ */
+function mergeChatActivities(activities: ChatToolActivity[]): TabStreamRunData['activities'] {
+  const map = new Map<string, TabStreamRunData['activities'][number]>()
+  for (const a of activities) {
+    const existing = map.get(a.toolCallId)
+    if (a.type === 'start') {
+      map.set(a.toolCallId, {
+        id: a.toolCallId,
+        toolName: a.toolName,
+        input: a.input ?? existing?.input ?? {},
+        done: false,
+      })
+    } else if (a.type === 'result') {
+      map.set(a.toolCallId, {
+        id: a.toolCallId,
+        toolName: existing?.toolName ?? a.toolName,
+        input: a.input ?? existing?.input ?? {},
+        done: true,
+        isError: a.isError,
+      })
+    }
+  }
+  return Array.from(map.values())
 }

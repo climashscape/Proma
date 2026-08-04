@@ -8,6 +8,7 @@
 
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
+import type { SDKMessage } from '@proma/shared'
 import {
   streamingConversationIdsAtom,
 } from './chat-atoms'
@@ -112,6 +113,34 @@ export interface TabMinimapItem {
   model?: string
 }
 export const tabMinimapCacheAtom = atom<Map<string, TabMinimapItem[]>>(new Map())
+
+/** Tab 预览中的单条工具活动（统一 agent/chat 两种来源） */
+export interface TabStreamActivity {
+  /** 工具调用 ID（chat 合并后取首个 toolCallId） */
+  id: string
+  toolName: string
+  input: Record<string, unknown>
+  done: boolean
+  isError?: boolean
+}
+
+/** Tab 预览中的会话流运行数据（流式运行时由 TabBarItem 组装） */
+export interface TabStreamRunData {
+  kind: 'agent' | 'chat'
+  /** 恒为 true（非运行状态由 streamRun 为 null 表达），保留字段以便未来扩展 */
+  running: boolean
+  /** 实时生成的文本内容 */
+  content: string
+  /** Chat 会话的实时推理内容（thinking），Agent 会话由 liveMessages 承载 */
+  reasoning?: string
+  /** 流式绑定的模型 ID */
+  model?: string
+  /** 流式开始时间戳 */
+  startedAt?: number
+  activities: TabStreamActivity[]
+  /** Agent 会话的实时 SDKMessage 流（thinking / tool_use / text 按时间顺序），Chat 会话无此字段 */
+  liveMessages?: SDKMessage[]
+}
 
 /** Scratch Pad 编辑内容（HTML 字符串，供 TipTap 编辑器使用） */
 export const scratchPadContentAtom = atom<string>('')

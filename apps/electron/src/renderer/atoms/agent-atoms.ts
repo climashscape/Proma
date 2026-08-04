@@ -313,6 +313,16 @@ export const agentSessionStreamingStateAtomFamily = atomFamily((sessionId: strin
  */
 export const liveMessagesMapAtom = atom<Map<string, SDKMessage[]>>(new Map())
 
+/**
+ * 单个 session 的 live SDKMessage 派生 atomFamily — 按 sessionId 切片订阅。
+ *
+ * 用于 Tab 预览等轻量订阅点：只在本 session 的实时消息变化时重渲染，
+ * 避免直接订阅全局 Map 被任意会话的流式更新触发整树重渲染。
+ */
+export const agentSessionLiveMessagesAtomFamily = atomFamily((sessionId: string) =>
+  atom((get) => get(liveMessagesMapAtom).get(sessionId)),
+)
+
 export const agentPendingPromptAtom = atom<AgentPendingPrompt | null>(null)
 
 /**
