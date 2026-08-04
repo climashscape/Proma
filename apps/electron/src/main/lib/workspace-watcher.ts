@@ -259,7 +259,11 @@ export function watchAttachedDirectory(dirPath: string): void {
   if (attachedWatchers.has(dirPath)) return
 
   try {
-    const w = watch(dirPath, { recursive: true }, () => {
+    const w = watch(dirPath, { recursive: true }, (_eventType, filename) => {
+      // 附加目录可能是大型项目（含 node_modules/.git/dist 等高频变动目录），
+      // 不过滤会触发 IPC 事件风暴：任何一次内部写入都通知渲染层刷新，
+      // 进而反复触发 getUnstagedChanges 全量 git 扫描，CPU 被打满。
+      if (!filename || isHighNoisePath(filename.replace(/\\/g, '/'))) return
       notifyWorkspaceFilesChanged()
     })
 
