@@ -6,7 +6,7 @@
  */
 
 import { atom } from 'jotai'
-import { atomWithStorage } from 'jotai/utils'
+import { atomFamily, atomWithStorage } from 'jotai/utils'
 import type { ConversationMeta, ChatMessage, FileAttachment, ChatToolActivity, Channel } from '@proma/shared'
 
 /** 全局渠道列表缓存（启动时加载一次，设置变更时刷新） */
@@ -60,6 +60,16 @@ export interface ConversationStreamState {
  * 流式结束后：从 Map 中删除该 key
  */
 export const streamingStatesAtom = atom<Map<string, ConversationStreamState>>(new Map())
+
+/**
+ * 单个 conversation 的 streaming state 派生 atomFamily — 按 conversationId 切片订阅。
+ *
+ * 直接订阅 streamingStatesAtom 会让任意对话的流式更新都触发订阅者整树重渲染。
+ * 本 family 让订阅者只在本 conversation 的 state 引用变化时重渲染。
+ */
+export const conversationStreamingStateAtomFamily = atomFamily((conversationId: string) =>
+  atom((get) => get(streamingStatesAtom).get(conversationId)),
+)
 
 /**
  * 当前正在流式输出的对话 ID 集合（派生只读原子）

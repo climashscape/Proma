@@ -406,6 +406,7 @@ function TabBarInner({
             key={tab.id}
             id={tab.id}
             type={tab.type}
+            sessionId={tab.sessionId}
             title={tab.title}
             workspaceName={tab.type === 'agent' ? workspaceNameBySessionId.get(tab.sessionId) : undefined}
             isAutomation={tab.type === 'agent' && automationSessionIds.has(tab.sessionId)}

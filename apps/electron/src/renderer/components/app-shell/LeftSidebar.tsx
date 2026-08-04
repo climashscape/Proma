@@ -30,6 +30,7 @@ import {
   conversationThinkingEnabledAtom,
   conversationParallelModeAtom,
   agentSideChatMapAtom,
+  conversationStreamingStateAtomFamily,
 } from '@/atoms/chat-atoms'
 import {
   agentSessionsAtom,
@@ -53,6 +54,7 @@ import {
   agentFileChangesCurrentRunAtom,
   agentDiffDataAtom,
   agentStreamingStatesAtom,
+  agentSessionLiveMessagesAtomFamily,
   liveMessagesMapAtom,
   agentSessionPendingFilesAtom,
   agentSessionStreamingStateAtomFamily,
@@ -933,6 +935,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     // atomFamily 内部缓存（Jotai 对 string key 强引用 Map，不显式 remove 永不释放）。
     // 删除/归档是会话的终态，连同草稿一起清理，无需像关闭 Tab 那样保留可恢复输入。
     agentSessionStreamingStateAtomFamily.remove(id)
+    agentSessionLiveMessagesAtomFamily.remove(id)
     agentSessionDraftAtomFamily.remove(id)
     agentSessionDraftHtmlAtomFamily.remove(id)
     agentPendingFilesAtomFamily.remove(id)
@@ -1275,6 +1278,9 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
       // 即使后端报错，也从本地列表移除（可能是对话已不存在）
       setConversations((prev) => prev.filter((c) => c.id !== pendingDeleteId))
     } finally {
+      // atomFamily 内部缓存（Jotai 对 string key 强引用 Map，不显式 remove 永不释放）。
+      // 删除是对话的终态，清理流式状态派生缓存条目。
+      conversationStreamingStateAtomFamily.remove(pendingDeleteId)
       setPendingDeleteId(null)
     }
   }
