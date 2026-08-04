@@ -15,6 +15,10 @@ import type { ChangeSource, ChangedFileStatus } from '@proma/shared'
 /** 大文件读取上限：超过则跳过，避免 IPC 序列化撑爆内存 */
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 
+/** listRepos 结果缓存 TTL：仓库列表相对稳定，避免每次打开下拉都全量扫 git */
+const LIST_REPOS_CACHE_TTL_MS = 60_000
+const listReposCache = new Map<string, { ts: number; repos: import('@proma/shared').RepoInfo[] }>()
+
 /**
  * 全量变更扫描并发上限。
  *
@@ -114,25 +118,212 @@ interface GitRootsCacheEntry {
 }
 const gitRootsCache = new Map<string, GitRootsCacheEntry>()
 
+/**
+ * 仓库根发现缓存 key：向上搜索是否跳过会影响结果（skipUpward 时不含向上命中），
+ * 故 key 需区分，避免 listRepos（skipUpward）与 getUnstagedChanges 之间串缓存。
+ */
+function gitRootsCacheKey(baseDir: string, skipUpward?: boolean): string {
+  return skipUpward ? `${baseDir}#down` : baseDir
+}
+
 /** 读取未过期的仓库根发现缓存 */
-function getCachedGitRoots(baseDir: string): string[] | null {
-  const entry = gitRootsCache.get(baseDir)
+function getCachedGitRoots(cacheKey: string): string[] | null {
+  const entry = gitRootsCache.get(cacheKey)
   if (!entry) return null
   if (Date.now() >= entry.expiresAt) {
-    gitRootsCache.delete(baseDir)
+    gitRootsCache.delete(cacheKey)
     return null
   }
   return entry.roots
 }
 
 /** 写入仓库根发现缓存（随变更扫描缓存一并清理） */
-function setCachedGitRoots(baseDir: string, roots: string[]): void {
-  gitRootsCache.set(baseDir, { roots, expiresAt: Date.now() + GIT_ROOTS_CACHE_TTL_MS })
+function setCachedGitRoots(cacheKey: string, roots: string[]): void {
+  gitRootsCache.set(cacheKey, { roots, expiresAt: Date.now() + GIT_ROOTS_CACHE_TTL_MS })
   if (gitRootsCache.size > 64) {
     const oldest = gitRootsCache.keys().next().value
     if (oldest !== undefined) gitRootsCache.delete(oldest)
   }
 }
+
+/**
+ * 使变更扫描缓存失效。
+ *
+ * 传 writtenPath 时只失效覆盖该路径的条目（Agent 连续写文件场景下避免每次都全量失效→全量重扫）；
+ * 不传则全量失效（git 突变 / revert 等影响面不确定的操作）。
+ *
+ * 相对路径匹配策略：先做宽松匹配（repo 根相对路径，如 apps/electron/...），
+ * 若相对路径未命中任何仓库（无法确定归属），则降级为全量失效——宁可重扫也不漏。
+ */
+export function invalidateGitDiffCache(writtenPath?: string): void {
+  if (!writtenPath) {
+    bumpCacheGeneration()
+    scanCache.clear()
+    perRepoCache.clear()
+    gitRootsCache.clear()
+    worktreesCache.clear()
+    repoChangesCache.clear()
+    listReposCache.clear()
+    baseBranchCache.clear()
+    return
+  }
+
+  const raw = writtenPath.replace(/\\/g, '/')
+  const isAbsolute = raw.startsWith('/') || /^[A-Za-z]:/.test(raw)
+  const affectedGitRoots: string[] = []
+
+  // 1. 仓库级缓存：删除受影响仓库的条目（绝对路径时直接匹配；相对路径用仓库名前缀宽松匹配）
+  for (const gitRoot of perRepoCache.keys()) {
+    const rootNorm = normalizeCachePath(gitRoot)
+    let hit = false
+    if (isAbsolute) {
+      const normalized = normalizeCachePath(raw)
+      hit = normalized === rootNorm || normalized.startsWith(rootNorm + '/')
+    } else {
+      const rootBase = basename(rootNorm)
+      // 宽松匹配：raw 以仓库名开头（Proma/...）或本身就是仓库内路径片段（apps/electron/...）
+      hit = raw === rootBase || raw.startsWith(rootBase + '/')
+    }
+    if (hit) {
+      perRepoCache.delete(gitRoot)
+      affectedGitRoots.push(gitRoot)
+    }
+  }
+
+  // 2. 整批缓存：删除覆盖受影响仓库的条目。
+  //    绝对路径时直接对 scanCache 条目自身记录的 gitRoots 匹配（不依赖 perRepoCache 是否存在）；
+  //    相对路径依赖 perRepoCache 命中，未命中时降级为全量失效。
+  let clearedScan = false
+  if (isAbsolute) {
+    const normalized = normalizeCachePath(raw)
+    for (const [key, entry] of scanCache) {
+      const overlaps = entry.gitRoots.some((root) => {
+        const rootNorm = normalizeCachePath(root)
+        return normalized === rootNorm || normalized.startsWith(rootNorm + '/')
+      })
+      if (overlaps) {
+        scanCache.delete(key)
+        clearedScan = true
+      }
+    }
+    // 绝对路径未命中任何缓存条目：可能是大小写不一致 / junction 真实路径差异，
+    // 无法确定归属，降级为全量失效（宁可重扫不可漏）。
+    if (!clearedScan) {
+      scanCache.clear()
+      perRepoCache.clear()
+    }
+  } else if (affectedGitRoots.length > 0) {
+    const affectedNorms = affectedGitRoots.map(normalizeCachePath)
+    for (const [key, entry] of scanCache) {
+      const overlaps = entry.gitRoots.some((root) => affectedNorms.includes(normalizeCachePath(root)))
+      if (overlaps) scanCache.delete(key)
+    }
+  } else {
+    // 相对路径未命中任何仓库：无法确定归属，降级为全量失效（宁可重扫不可漏）
+    scanCache.clear()
+    perRepoCache.clear()
+  }
+
+  // 定向失效也清理 repoChangesCache 中受影响仓库的条目（key 前缀含仓库根），
+  // 否则 Agent 写文件后仓库聚合视图仍吃到 5s TTL 内的旧数据。
+  if (affectedGitRoots.length > 0) {
+    for (const key of repoChangesCache.keys()) {
+      const affected = affectedGitRoots.some((root) =>
+        key.includes(`repo:${normalizeGitRoot(root)}:`) || key.includes(`repo:${normalizeGitRoot(root)}|`),
+      )
+      if (affected) repoChangesCache.delete(key)
+    }
+  }
+
+  // 无论定向还是全量，都递增代际：in-flight 扫描在失效后完成的 setCached* 将被丢弃
+  bumpCacheGeneration()
+}
+
+/** 归一化路径用于缓存 key：统一分隔符（/ 与 \）并去除尾分隔符，避免同目录不同写法产生多份缓存 */
+function normalizeCachePath(p: string): string {
+  try {
+    return resolve(p).replace(/\\/g, '/').replace(/\/+$/, '')
+  } catch {
+    // 极端输入（含 NUL 等非法字符）下回退到原文，保证缓存 key 构造永不抛错
+    return p
+  }
+}
+
+/** 构建变更扫描缓存 key（规范化 extraPaths 顺序，避免同一集合不同排列造成缓存抖动） */
+function buildScanCacheKey(
+  dirPath: string,
+  sessionPath?: string,
+  workspaceFilesPath?: string,
+  extraPaths?: string[],
+): string {
+  return JSON.stringify([
+    normalizeCachePath(dirPath),
+    sessionPath ? normalizeCachePath(sessionPath) : '',
+    workspaceFilesPath ? normalizeCachePath(workspaceFilesPath) : '',
+    [...(extraPaths ?? [])].map(normalizeCachePath).sort(),
+  ])
+}
+
+/** 读取未过期缓存，命中则返回；过期或代际不符或未命中返回 null */
+function getCachedScanResult(key: string): UnstagedChangesResult | null {
+  const entry = scanCache.get(key)
+  if (!entry) return null
+  if (entry.generation !== cacheGeneration) {
+    scanCache.delete(key)
+    return null
+  }
+  if (Date.now() >= entry.expiresAt) {
+    scanCache.delete(key)
+    return null
+  }
+  return entry.result
+}
+
+/** 写入扫描结果缓存（代际不符时丢弃，防 in-flight 旧结果回填） */
+function setCachedScanResult(key: string, result: UnstagedChangesResult, allGitRoots: string[]): void {
+  // 记录该结果覆盖的 git 仓库根（完整路径），用于定向失效。
+  // 即使结果为空（clean 仓库）也必须记录 gitRoots，否则写文件后定向失效
+  // 无法命中该条目 → 整批缓存不删 → 新文件不显示。
+  const gitRoots: string[] = []
+  const pushRoot = (root?: string) => {
+    if (root && !gitRoots.includes(root)) gitRoots.push(root)
+  }
+  result.files.forEach((f) => pushRoot(f.gitRoot))
+  result.untrackedFiles.forEach((f) => pushRoot(f.gitRoot))
+  allGitRoots.forEach((root) => pushRoot(root))
+
+  scanCache.set(key, { result, gitRoots, generation: cacheGeneration, expiresAt: Date.now() + SCAN_CACHE_TTL_MS })
+  // 防止缓存无限增长：超过 64 条时清理最早的一条
+  if (scanCache.size > 64) {
+    const oldest = scanCache.keys().next().value
+    if (oldest !== undefined) scanCache.delete(oldest)
+  }
+}
+
+/**
+ * 有界并发执行器：最多同时运行 limit 个任务，结果按输入顺序返回。
+ * 用于多个 git 仓库的变更扫描，控制同时 spawn 的 git 进程数量。
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0 || limit <= 0) return []
+
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = nextIndex++
+      if (i >= items.length) break
+      results[i] = await fn(items[i]!, i)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 
 /**
  * 使变更扫描缓存失效。
@@ -582,6 +773,19 @@ export async function getUnstagedChanges(
     const roots = await findAllGitRoots(cand.searchPath)
     for (const root of roots) {
       if (!gitRoots.includes(root)) gitRoots.push(root)
+      // 枚举该仓库的所有 worktree（非主 worktree 也纳入扫描），
+      // 让默认「会话改动」视图也能看到 worktree 分支里的未提交改动。
+      // worktree 列表走 10s 缓存，与 listRepos 共用，避免重复 spawn git。
+      try {
+        const wts = await listWorktreesFromRoot(root)
+        for (const wt of wts) {
+          if (wt.isMain) continue
+          const wtRoot = normalizeGitRoot(wt.path)
+          if (!gitRoots.includes(wtRoot)) gitRoots.push(wtRoot)
+        }
+      } catch {
+        // worktree 枚举失败不影响主仓库扫描
+      }
     }
   }
 
@@ -730,7 +934,13 @@ function findAllGitRootsDown(dirPath: string, maxDepth: number): string[] {
   const found: string[] = []
   for (const name of entries) {
     if (name === '.git') {
-      found.push(dirPath)
+      // worktree 的 .git 是指针文件而非目录，不作为独立仓库根（由主仓库 worktree 枚举覆盖）
+      try {
+        const gitSt = statSync(join(dirPath, '.git'))
+        if (gitSt.isDirectory()) found.push(dirPath)
+      } catch {
+        // ignore
+      }
       continue
     }
     if (name.startsWith('.') || name === 'node_modules') continue
@@ -740,9 +950,16 @@ function findAllGitRootsDown(dirPath: string, maxDepth: number): string[] {
     try { st = statSync(fullPath) } catch { continue }
     if (!st.isDirectory()) continue
 
-    if (existsSync(join(fullPath, '.git'))) {
+    // 只有 .git 为目录才视为真仓库根；.git 为文件则是 worktree 指针（由主仓库枚举，跳过避免重复）
+    let gitSt
+    try { gitSt = statSync(join(fullPath, '.git')) } catch { gitSt = undefined }
+    if (gitSt?.isDirectory()) {
       found.push(fullPath)
       // 已确认是 git root，不再深入避免重复
+      continue
+    }
+    if (gitSt?.isFile()) {
+      // worktree 目录：跳过深层递归（其内容属于同一仓库）
       continue
     }
     // 超大目录：跳过深层递归，但仍处理上面的直接子仓库检查
@@ -754,22 +971,25 @@ function findAllGitRootsDown(dirPath: string, maxDepth: number): string[] {
 }
 
 /** 查找 Git 仓库根目录（支持向上搜索子目录内的 repos），返回所有找到的根 */
-export async function findAllGitRoots(baseDir: string): Promise<string[]> {
+export async function findAllGitRoots(baseDir: string, options?: { skipUpward?: boolean }): Promise<string[]> {
   if (!existsSync(baseDir)) return []
 
   // 仓库结构比变更结果稳定，缓存避免每次扫描重复冷启动 git rev-parse
-  const cached = getCachedGitRoots(baseDir)
+  const cacheKey = gitRootsCacheKey(baseDir, options?.skipUpward)
+  const cached = getCachedGitRoots(cacheKey)
   if (cached) return cached
 
   const roots: string[] = []
 
   // 1. 向上搜索：逐级 existsSync 找最近祖先 .git（目录或 worktree 文件，~1ms），
-  //    命中即返回仓库根；未命中说明 baseDir 不在任何仓库内（如 fork 集合根），
-  //    此时 git rev-parse 必然失败且冷启动可长达 3s+，直接跳过避免浪费。
-  const topDir = findAncestorGitDir(baseDir)
-  if (topDir) {
-    const normalized = normalizeGitRoot(topDir)
-    if (!roots.includes(normalized)) roots.push(normalized)
+  //    避免 git rev-parse 冷启动（可达 3s+）；调用方已知 baseDir 非仓库时可跳过。
+  if (!options?.skipUpward) {
+    const topDir = findAncestorGitDir(baseDir)
+    if (topDir) {
+      const normalized = normalizeGitRoot(topDir)
+      if (!roots.includes(normalized)) roots.push(normalized)
+    }
+  }
   }
 
   // 2. 向下搜索所有子 .git
@@ -778,7 +998,7 @@ export async function findAllGitRoots(baseDir: string): Promise<string[]> {
     if (!roots.includes(normalized)) roots.push(normalized)
   }
 
-  setCachedGitRoots(baseDir, roots)
+  setCachedGitRoots(cacheKey, roots)
   return roots
 }
 
@@ -953,18 +1173,61 @@ export async function getMainRepoRoot(somePath: string): Promise<string | null> 
 /**
  * 列出指定仓库的所有 Git Worktree
  */
-export async function listWorktrees(repoPath: string): Promise<import('@proma/shared').WorktreeInfo[]> {
+export async function listWorktrees(repoPath: string, force = false): Promise<import('@proma/shared').WorktreeInfo[]> {
   const root = await findGitRoot(repoPath)
   if (!root) return []
+  return listWorktreesFromRoot(root, force)
+}
+
+/**
+ * 假定 root 已是仓库根，直接列出其所有 worktree。
+ *
+ * 与 listWorktrees 的区别：跳过 findGitRoot 的向上 rev-parse / 向下递归扫描
+ * （对大仓库可达数秒），供批量枚举仓库时复用已发现的根。
+ * porcelain 输出第一个 block 即主 worktree（git 保证），不再额外跑 rev-parse。
+ */
+/** worktree 列表缓存 TTL：worktree 结构相对稳定（新增/删除才变），枚举避免重复 spawn git */
+const WORKTREES_CACHE_TTL_MS = 10_000
+const worktreesCache = new Map<string, { worktrees: import('@proma/shared').WorktreeInfo[]; expiresAt: number }>()
+
+/** 读取未过期的 worktree 列表缓存 */
+function getCachedWorktrees(gitRoot: string): import('@proma/shared').WorktreeInfo[] | null {
+  const entry = worktreesCache.get(gitRoot)
+  if (!entry) return null
+  if (Date.now() >= entry.expiresAt) {
+    worktreesCache.delete(gitRoot)
+    return null
+  }
+  return entry.worktrees
+}
+
+/** 写入 worktree 列表缓存（带简单上限） */
+function setCachedWorktrees(gitRoot: string, worktrees: import('@proma/shared').WorktreeInfo[]): void {
+  worktreesCache.set(gitRoot, { worktrees, expiresAt: Date.now() + WORKTREES_CACHE_TTL_MS })
+  if (worktreesCache.size > 128) {
+    const oldest = worktreesCache.keys().next().value
+    if (oldest !== undefined) worktreesCache.delete(oldest)
+  }
+}
+
+async function listWorktreesFromRoot(root: string, force = false): Promise<import('@proma/shared').WorktreeInfo[]> {
+  const cacheKey = normalizeGitRoot(root)
+  if (!force) {
+    const cached = getCachedWorktrees(cacheKey)
+    if (cached) return cached
+  }
+
   const output = await runGitCommand(['worktree', 'list', '--porcelain'], root, { quiet: true })
-  if (!output) return []
-  const mainRepoRoot = await getMainRepoRoot(root)
-  const normalizedMainRoot = mainRepoRoot ? normalizeGitRoot(mainRepoRoot) : normalizeGitRoot(root)
+  if (!output) {
+    setCachedWorktrees(cacheKey, [])
+    return []
+  }
+  const normalizedRoot = normalizeGitRoot(root)
 
   const worktrees: import('@proma/shared').WorktreeInfo[] = []
   const blocks = output.split('\n\n').filter(Boolean)
 
-  for (const block of blocks) {
+  blocks.forEach((block, index) => {
     const lines = block.split('\n')
     let path = ''
     let head = ''
@@ -986,7 +1249,8 @@ export async function listWorktrees(repoPath: string): Promise<import('@proma/sh
     }
 
     if (path && !prunable && existsSync(path)) {
-      const isMain = normalizeGitRoot(path) === normalizedMainRoot
+      // porcelain 第一个 block 一定是主 worktree
+      const isMain = index === 0 || normalizeGitRoot(path) === normalizedRoot
       worktrees.push({
         path,
         branch: branch || 'unknown',
@@ -995,9 +1259,44 @@ export async function listWorktrees(repoPath: string): Promise<import('@proma/sh
         name: basename(path),
       })
     }
+  })
+
+  setCachedWorktrees(cacheKey, worktrees)
+  return worktrees
+}
+
+/** 基准分支探测结果缓存 TTL：分支结构相对稳定，避免每次聚焦重复跑 git */
+const BASE_BRANCH_CACHE_TTL_MS = 30_000
+const baseBranchCache = new Map<string, { base: string; expiresAt: number }>()
+
+/**
+ * 解析默认基准分支：优先远端默认分支（origin/main → origin/master），
+ * 退化本地 main/master，最后用 HEAD~1（无远端可用的相对基准）。
+ *
+ * 用单次 for-each-ref 枚举全部 refs（替代 4 次串行 rev-parse --verify，
+ * 后者对不存在的 ref 在 Windows 上单次可达 3.6s），结果按仓库缓存 30s。
+ */
+async function resolveDefaultBaseBranch(gitRoot: string): Promise<string> {
+  const key = normalizeGitRoot(gitRoot)
+  const cached = baseBranchCache.get(key)
+  if (cached && Date.now() < cached.expiresAt) return cached.base
+
+  const output = await runGitCommand(
+    ['for-each-ref', '--format=%(refname)', 'refs/remotes/origin', 'refs/heads'],
+    gitRoot,
+    { quiet: true },
+  )
+  const refs = new Set((output || '').split('\n').filter(Boolean))
+  let base = 'HEAD~1'
+  for (const ref of ['refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/heads/main', 'refs/heads/master']) {
+    if (refs.has(ref)) {
+      base = ref.replace('refs/remotes/origin/', 'origin/').replace('refs/heads/', '')
+      break
+    }
   }
 
-  return worktrees
+  baseBranchCache.set(key, { base, expiresAt: Date.now() + BASE_BRANCH_CACHE_TTL_MS })
+  return base
 }
 
 /**
@@ -1005,14 +1304,12 @@ export async function listWorktrees(repoPath: string): Promise<import('@proma/sh
  */
 export async function getWorktreeChanges(
   worktreePath: string,
-  baseBranch: string = 'origin/main',
+  baseBranch?: string,
+  options?: { skipFetch?: boolean; compareMode?: boolean },
 ): Promise<import('@proma/shared').UnstagedChangesResult> {
   if (!existsSync(worktreePath)) {
     return { isGitRepo: false, files: [], untrackedFiles: [], gitRootNames: [] }
   }
-
-  // 尝试 fetch 远端 main 以确保 baseBranch 最新
-  await runGitCommand(['fetch', 'origin', 'main', '--quiet'], worktreePath)
 
   // 确认是 git 仓库
   const toplevel = await runGitCommand(['rev-parse', '--show-toplevel'], worktreePath)
@@ -1021,12 +1318,25 @@ export async function getWorktreeChanges(
   }
 
   const gitRoot = normalizeGitRoot(toplevel)
+
+  // 尝试 fetch 远端默认分支以确保 baseBranch 最新（聚合视图已统一 fetch，可跳过；无远端时静默降级）
+  if (!options?.skipFetch) {
+    await runGitCommand(['fetch', 'origin', '--quiet'], gitRoot, { quiet: true })
+  }
+
+  // 基准分支：显式传入优先，否则自动探测（origin/main → origin/master → …）
+  const effectiveBase = baseBranch || await resolveDefaultBaseBranch(gitRoot)
   const allFiles: import('@proma/shared').ChangedFileEntry[] = []
   const fileMap = new Map<string, import('@proma/shared').ChangedFileEntry>()
 
-  // 1. 已 commit 但未合并的改动: git diff baseBranch...HEAD
-  const committedStatus = await runGitCommand(['diff', `${baseBranch}...HEAD`, '--name-status'], gitRoot)
-  const committedNumstat = await runGitCommand(['diff', `${baseBranch}...HEAD`, '--numstat'], gitRoot)
+  // 1. 已 commit 但未合并的改动：
+  //    默认三点 diff（base...HEAD，只含共同祖先之后 HEAD 的改动）；
+  //    compareMode 用两点 diff（base HEAD，展示两分支全部差异，基准独有改动以删除呈现）
+  const committedRange = options?.compareMode
+    ? ['diff', effectiveBase, 'HEAD']
+    : ['diff', `${effectiveBase}...HEAD`]
+  const committedStatus = await runGitCommand([...committedRange, '--name-status'], gitRoot)
+  const committedNumstat = await runGitCommand([...committedRange, '--numstat'], gitRoot)
   const committedStats = parseNumstat(committedNumstat)
 
   if (committedStatus) {
@@ -1121,5 +1431,221 @@ export async function getWorktreeChanges(
     files: allFiles,
     untrackedFiles,
     gitRootNames: [basename(gitRoot)],
+    baseBranch: effectiveBase,
   }
+}
+
+/**
+ * 获取 worktree 领先基准分支的 commit 摘要（git log base..HEAD --oneline）。
+ * 供仓库聚合视图展示「已提交但未合并」的 commit 概览。
+ */
+/** 解析 git log --format 输出为 CommitSummary 列表 */
+function parseCommitSummaries(output: string): import('@proma/shared').CommitSummary[] {
+  return output.split('\n').filter(Boolean).map((line) => {
+    const [hash, author, date, ...rest] = line.split('|')
+    return {
+      hash: hash || '',
+      author: author || '',
+      date: date || '',
+      subject: rest.join('|') || '',
+    }
+  })
+}
+
+/** 获取指定 commit 范围的摘要（rangeSpec 如 'base..HEAD' 或 'HEAD..base'） */
+async function getCommitRange(worktreePath: string, rangeSpec: string): Promise<import('@proma/shared').CommitSummary[]> {
+  const toplevel = await runGitCommand(['rev-parse', '--show-toplevel'], worktreePath, { quiet: true })
+  if (!toplevel) return []
+  const output = await runGitCommand(
+    ['log', rangeSpec, '--format=%h|%an|%ad|%s', '--date=short', '--max-count=50'],
+    normalizeGitRoot(toplevel),
+    { quiet: true },
+  )
+  if (!output) return []
+  return parseCommitSummaries(output)
+}
+
+/** worktree 领先基准分支的 commit 摘要（git log base..HEAD） */
+async function getLeadingCommits(worktreePath: string, baseBranch: string): Promise<import('@proma/shared').CommitSummary[]> {
+  return getCommitRange(worktreePath, `${baseBranch}..HEAD`)
+}
+
+/** 基准分支独有、worktree 没有的 commit 摘要（git log HEAD..base） */
+async function getTrailingCommits(worktreePath: string, baseBranch: string): Promise<import('@proma/shared').CommitSummary[]> {
+  return getCommitRange(worktreePath, `HEAD..${baseBranch}`)
+}
+
+/**
+ * 列出指定目录下扫描到的所有 Git 仓库（含各自的所有 worktree）。
+ *
+ * 用于文件改动 tab 的「仓库选择器」：把工作区内发现的仓库根加入可选列表，
+ * 每个仓库携带分支信息与 worktree 清单，选中后即可按仓库聚合扫描。
+ * 仓库较多时并行收集（限并发），避免串行 git worktree list 拖慢下拉。
+ */
+export async function listRepos(baseDir: string, options?: { force?: boolean }): Promise<import('@proma/shared').RepoInfo[]> {
+  if (!existsSync(baseDir)) return []
+
+  // 仓库列表相对稳定，用短 TTL 缓存避免每次打开下拉都全量扫 git（Windows 下 spawn git 较慢）
+  const cacheKey = `listRepos:${normalizeGitRoot(baseDir)}`
+  const now = Date.now()
+  const hit = listReposCache.get(cacheKey)
+  if (!options?.force && hit && now - hit.ts < LIST_REPOS_CACHE_TTL_MS) {
+    return hit.repos
+  }
+
+  // 仓库根集合：baseDir 自身若为仓库根也要纳入（skipUpward 只跳过向上 rev-parse）
+  const roots: string[] = []
+  if (existsSync(join(baseDir, '.git'))) {
+    roots.push(normalizeGitRoot(baseDir))
+  }
+  for (const r of await findAllGitRoots(baseDir, { skipUpward: true })) {
+    if (!roots.includes(r)) roots.push(r)
+  }
+  if (roots.length === 0) return []
+
+  const CONCURRENCY = 8
+  const results: (import('@proma/shared').RepoInfo | null)[] = new Array(roots.length).fill(null)
+  let cursor = 0
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = cursor++
+      if (i >= roots.length) return
+      const root = roots[i]!
+      try {
+        const worktrees = await listWorktreesFromRoot(root)
+        if (worktrees.length === 0) continue
+        const main = worktrees.find((wt) => wt.isMain) ?? worktrees[0]!
+        results[i] = {
+          repoPath: root,
+          name: basename(root),
+          branch: main.branch,
+          head: main.head,
+          worktreeCount: worktrees.length,
+          worktrees,
+        }
+      } catch {
+        // skip repos that fail
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, roots.length) }, () => worker()))
+  const repos = results
+    .filter((r): r is import('@proma/shared').RepoInfo => r !== null)
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  listReposCache.set(cacheKey, { ts: now, repos })
+  // 简单上限：超过 50 条时删除最早插入的条目（Map 迭代序即插入序）
+  if (listReposCache.size > 50) {
+    const oldestKey = listReposCache.keys().next().value as string | undefined
+    if (oldestKey) listReposCache.delete(oldestKey)
+  }
+  return repos
+}
+
+/** 仓库聚合变更结果缓存 TTL：与变更扫描缓存一致，写文件/git 变更后由 invalidateGitDiffCache 主动失效 */
+const REPO_CHANGES_CACHE_TTL_MS = 5000
+interface RepoChangesCacheEntry {
+  result: import('@proma/shared').RepoChangesResult
+  expiresAt: number
+}
+const repoChangesCache = new Map<string, RepoChangesCacheEntry>()
+
+function getCachedRepoChanges(key: string): import('@proma/shared').RepoChangesResult | null {
+  const entry = repoChangesCache.get(key)
+  if (!entry) return null
+  if (Date.now() >= entry.expiresAt) {
+    repoChangesCache.delete(key)
+    return null
+  }
+  return entry.result
+}
+
+function setCachedRepoChanges(key: string, result: import('@proma/shared').RepoChangesResult): void {
+  repoChangesCache.set(key, { result, expiresAt: Date.now() + REPO_CHANGES_CACHE_TTL_MS })
+  if (repoChangesCache.size > 64) {
+    const oldest = repoChangesCache.keys().next().value
+    if (oldest !== undefined) repoChangesCache.delete(oldest)
+  }
+}
+
+/**
+ * 获取仓库所有 worktree 相对基准分支的全量变更（聚合视图）。
+ *
+ * 每个 worktree 复用 getWorktreeChanges 逻辑；fetch 远端只执行一次，
+ * worktree 之间限并发收集，避免瞬时 spawn 过多 git 进程。
+ *
+ * @param options.isPathAllowed 逐 worktree 路径授权过滤（防御纵深：
+ *   worktree 元数据可能指向未授权目录，不通过校验的 worktree 会被跳过）
+ * @param options.sessionId 会话标识，参与缓存 key 隔离（不同会话授权范围不同）
+ */
+export async function getRepoChanges(
+  repoPath: string,
+  baseBranch?: string,
+  options?: {
+    isPathAllowed?: (p: string) => boolean | Promise<boolean>
+    sessionId?: string
+  },
+): Promise<import('@proma/shared').RepoChangesResult> {
+  // 5s 短 TTL 缓存：窗口聚焦等高频触发在窗口内复用，写文件后 invalidateGitDiffCache 主动失效；
+  // key 含 sessionId 与授权范围隔离，避免跨会话缓存泄漏
+  const cacheKey = `repo:${normalizeGitRoot(repoPath)}:${baseBranch || '*'}|${options?.sessionId || ''}`
+  const cachedResult = getCachedRepoChanges(cacheKey)
+  if (cachedResult) return cachedResult
+
+  let worktrees = await listWorktrees(repoPath)
+  if (options?.isPathAllowed) {
+    const allowed = await Promise.all(worktrees.map((wt) => Promise.resolve(options.isPathAllowed!(wt.path))))
+    worktrees = worktrees.filter((_, i) => allowed[i])
+  }
+  if (worktrees.length === 0) {
+    return { isGitRepo: false, repoPath, baseBranch: baseBranch || '', worktrees: [] }
+  }
+
+  // fetch 一次远端（以主 worktree 为 cwd），各 worktree 内部跳过 fetch；
+  // 显式指定对比基准（worktree A vs B）时无需 fetch，跳过避免无谓网络/等待；无远端时静默降级
+  const main = worktrees.find((wt) => wt.isMain) ?? worktrees[0]!
+  if (!baseBranch) {
+    await runGitCommand(['fetch', 'origin', '--quiet'], main.path, { quiet: true })
+  }
+
+  // 基准分支：显式传入优先，否则自动探测（origin/main → origin/master → …）
+  const effectiveBase = baseBranch || await resolveDefaultBaseBranch(main.path)
+  // 用户显式指定对比基准（worktree A vs B）时用两点 diff，展示两分支全部差异
+  // （基准分支独有改动以「删除」呈现，与聚合视图的祖先 diff 区分）
+  const compareMode = Boolean(baseBranch)
+
+  const CONCURRENCY = 4
+  const results: (import('@proma/shared').RepoWorktreeChanges | null)[] = new Array(worktrees.length).fill(null)
+  let cursor = 0
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = cursor++
+      if (i >= worktrees.length) return
+      const wt = worktrees[i]!
+      try {
+        const [changes, commits, trailingCommits] = await Promise.all([
+          getWorktreeChanges(wt.path, effectiveBase, { skipFetch: true, compareMode }),
+          getLeadingCommits(wt.path, effectiveBase),
+          getTrailingCommits(wt.path, effectiveBase),
+        ])
+        results[i] = { worktree: wt, changes, commits, trailingCommits }
+      } catch {
+        // skip worktrees that fail
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, worktrees.length) }, () => worker()))
+
+  const result: import('@proma/shared').RepoChangesResult = {
+    isGitRepo: true,
+    repoPath,
+    baseBranch: effectiveBase,
+    worktrees: results.filter((r): r is import('@proma/shared').RepoWorktreeChanges => r !== null),
+  }
+  setCachedRepoChanges(cacheKey, result)
+  return result
 }

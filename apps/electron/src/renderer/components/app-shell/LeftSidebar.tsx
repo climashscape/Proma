@@ -53,6 +53,10 @@ import {
   agentNonGitFileChangesAtom,
   agentFileChangesCurrentRunAtom,
   agentDiffDataAtom,
+  agentDiffRepoDataAtom,
+  agentSelectedWorktreeAtom,
+  agentSelectedRepoAtom,
+  agentDiffBaseBranchAtom,
   agentStreamingStatesAtom,
   agentSessionLiveMessagesAtomFamily,
   liveMessagesMapAtom,
@@ -871,6 +875,10 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const setNonGitFileChanges = useSetAtom(agentNonGitFileChangesAtom)
   const setFileChangesCurrentRun = useSetAtom(agentFileChangesCurrentRunAtom)
   const setDiffData = useSetAtom(agentDiffDataAtom)
+  const setSelectedWorktree = useSetAtom(agentSelectedWorktreeAtom)
+  const setSelectedRepo = useSetAtom(agentSelectedRepoAtom)
+  const setDiffRepoData = useSetAtom(agentDiffRepoDataAtom)
+  const setDiffBaseBranch = useSetAtom(agentDiffBaseBranchAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setLiveMessagesMap = useSetAtom(liveMessagesMapAtom)
   const setSessionPendingFiles = useSetAtom(agentSessionPendingFilesAtom)
@@ -909,7 +917,23 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     setDiffUnseenFiles(deleteKey)
     setNonGitFileChanges(deleteKey)
     setFileChangesCurrentRun(deleteKey)
-    setDiffData(deleteKey)
+    // 前缀键（sessionId:repo:*/sessionId:worktree:*）也需清理，避免孤立缓存条目
+    const deletePrefixed = <T,>(prev: Map<string, T>): Map<string, T> => {
+      let changed = false
+      const map = new Map(prev)
+      for (const key of map.keys()) {
+        if (key === id || key.startsWith(`${id}:`)) {
+          map.delete(key)
+          changed = true
+        }
+      }
+      return changed ? map : prev
+    }
+    setDiffData(deletePrefixed)
+    setDiffRepoData(deletePrefixed)
+    setSelectedWorktree(deleteKey)
+    setSelectedRepo(deleteKey)
+    setDiffBaseBranch(deleteKey)
     setSessionChannelMap(deleteKey)
     setSessionModelMap(deleteKey)
     // 会话工作目录路径：不清理会导致右侧文件面板继续用已删除目录请求 list-directory
@@ -944,7 +968,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     sessionExistsAtom.remove(id)
 
     clearPreviewCacheForSession(id)
-  }, [setConvModels, setConvContextLength, setConvThinking, setConvParallel, setConvPromptId, setPreviewPanelOpen, setPreviewFile, setDiffPanelTab, setDiffRefreshVersion, setDiffUnseen, setDiffUnseenFiles, setNonGitFileChanges, setFileChangesCurrentRun, setDiffData, setSessionChannelMap, setSessionModelMap, setSessionPathMap, setSessionViewStateMap, setStreamingStates, setLiveMessagesMap, setSessionPendingFiles, store])
+  }, [setConvModels, setConvContextLength, setConvThinking, setConvParallel, setConvPromptId, setPreviewPanelOpen, setPreviewFile, setDiffPanelTab, setDiffRefreshVersion, setDiffUnseen, setDiffUnseenFiles, setNonGitFileChanges, setFileChangesCurrentRun, setDiffData, setSelectedWorktree, setSelectedRepo, setDiffRepoData, setDiffBaseBranch, setSessionChannelMap, setSessionModelMap, setSessionPathMap, setSessionViewStateMap, setStreamingStates, setLiveMessagesMap, setSessionPendingFiles, store])
 
   const currentWorkspaceSlug = React.useMemo(() => {
     if (!currentWorkspaceId) return null
