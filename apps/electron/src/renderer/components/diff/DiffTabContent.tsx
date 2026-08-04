@@ -124,7 +124,6 @@ function isSamePreviewFile(writtenPath: string, filePath: string): boolean {
 function scrollCacheKey(sessionId: string, filePath: string, scope = ''): string {
   return `${sessionId}:${filePath}:${scope}`
 }
-}
 
 /** 获取缓存的滚动位置 */
 export function getPreviewScrollPosition(sessionId: string, filePath: string, scope?: string): { top: number; left: number } | undefined {
