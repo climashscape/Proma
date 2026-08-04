@@ -113,6 +113,7 @@ import { wechatBridge } from './lib/wechat-bridge'
 import { getWeChatConfig } from './lib/wechat-config'
 import { createQuickTaskWindow, toggleQuickTaskWindow, destroyQuickTaskWindow } from './lib/quick-task-window'
 import { destroyPlanningWindow, showPlanningWindow } from './lib/planning-window'
+import { destroySettingsWindow } from './lib/settings-window'
 import { createAgentIslandWindow, destroyAgentIslandWindow, showAgentIslandWindow } from './lib/agent-island-window'
 import { handleNativeAgentIslandEvent, initAgentIslandService, disposeAgentIslandService, publishAgentIslandNow } from './lib/agent-island-service'
 import { disposeMacAgentIslandNativeHost, startMacAgentIslandNativeHost } from './lib/mac-agent-island-native-host'
@@ -735,6 +736,7 @@ app.on('before-quit', () => {
   // 销毁辅助窗口
   destroyQuickTaskWindow()
   destroyPlanningWindow()
+  destroySettingsWindow()
   destroyVoiceDictationWindow()
   // 销毁灵动岛服务与窗口（先关闭 NSPanel helper，避免开发热重载遗留原生面板）
   disposeMacAgentIslandNativeHost()

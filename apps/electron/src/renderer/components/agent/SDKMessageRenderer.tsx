@@ -60,7 +60,6 @@ import { automationsAtom, automationFormAtom, automationToDraft } from '@/atoms/
 import { activeViewAtom } from '@/atoms/active-view'
 import { planningTabAtom } from '@/atoms/planning-atoms'
 import { environmentCheckDialogOpenAtom } from '@/atoms/environment'
-import { settingsOpenAtom, settingsTabAtom } from '@/atoms/settings-tab'
 import { useOpenPreview } from '@/components/diff/preview-opener'
 import { getFileParentPath } from '@/lib/file-utils'
 import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
@@ -1131,8 +1130,6 @@ export function AssistantErrorTail({
   const canRestoreProjectRoot = shouldOfferProjectRootRestore(projectRootStatus)
 
   const setEnvDialogOpen = useSetAtom(environmentCheckDialogOpenAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
-  const setSettingsTab = useSetAtom(settingsTabAtom)
   const setModelSelectorOpen = useSetAtom(modelSelectorOpenAtom)
   const [detailsOpen, setDetailsOpen] = React.useState(false)
 
@@ -1156,11 +1153,10 @@ export function AssistantErrorTail({
         setEnvDialogOpen(true)
         break
       case 'open_channel_settings':
-        setSettingsTab('channels')
-        setSettingsOpen(true)
+        void window.electronAPI.openSettingsWindow('channels')
         break
       case 'settings':
-        setSettingsOpen(true)
+        void window.electronAPI.openSettingsWindow()
         break
       case 'select_model':
         setModelSelectorOpen(true)

@@ -23,7 +23,7 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { agentPendingPromptAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
 import { agentSkillsTabAtom } from '@/atoms/active-view'
-import { settingsOpenAtom, settingsTabAtom, toolSettingsFocusAtom, type ToolSettingsFocus } from '@/atoms/settings-tab'
+
 import { useProjectActions } from '@/hooks/useProjectActions'
 import { useCreateSession } from '@/hooks/useCreateSession'
 import { LocalProjectBadge } from '@/components/agent/LocalProjectBadge'
@@ -90,9 +90,6 @@ export function AgentSkillsView(): React.ReactElement {
   const data = useAgentSkillsData()
   const bumpCapabilities = useSetAtom(workspaceCapabilitiesVersionAtom)
   const setPendingPrompt = useSetAtom(agentPendingPromptAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
-  const setSettingsTab = useSetAtom(settingsTabAtom)
-  const setToolSettingsFocus = useSetAtom(toolSettingsFocusAtom)
   const { workspaces, currentWorkspaceId, selectProject } = useProjectActions()
   const { createAgent } = useCreateSession()
   const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
@@ -158,17 +155,10 @@ export function AgentSkillsView(): React.ReactElement {
   }
 
   const configureBuiltinMcp = React.useCallback((serverId: string): void => {
-    const focusMap: Partial<Record<string, ToolSettingsFocus>> = {
-      mem: 'memory',
-      'nano-banana': 'nano-banana',
-    }
-    const focus = focusMap[serverId]
-    if (!focus) return
-    setToolSettingsFocus(focus)
-    setSettingsTab('tools')
-    setSettingsOpen(true)
+    // 独立设置窗口不支持直达内置 MCP 配置区，统一打开 Chat 工具页
+    void window.electronAPI.openSettingsWindow('tools')
     setSelectedBuiltinMcp(null)
-  }, [setSettingsOpen, setSettingsTab, setToolSettingsFocus])
+  }, [setSelectedBuiltinMcp])
 
   const handleClassifySkills = React.useCallback(async (): Promise<void> => {
     if (classifyingSkills) return

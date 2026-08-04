@@ -37,7 +37,6 @@ import {
 import { agentWorkspacesAtom, agentSessionsAtom, agentChannelIdsAtom, agentRuntimeAtom, currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
 import { activeSessionIdAtom } from '@/atoms/tab-atoms'
 import { activeViewAtom, agentSkillsTabAtom } from '@/atoms/active-view'
-import { settingsOpenAtom, settingsTabAtom } from '@/atoms/settings-tab'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { MarkdownRichEditor } from '@/components/diff/MarkdownRichEditor'
 import { LocalProjectBadge } from '@/components/agent/LocalProjectBadge'
@@ -398,8 +397,7 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
   const currentAgentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const setActiveView = useSetAtom(activeViewAtom)
   const setAgentSkillsTab = useSetAtom(agentSkillsTabAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
-  const setSettingsTab = useSetAtom(settingsTabAtom)
+
   const openSession = useOpenSession()
 
   const [form, setForm] = React.useState<AutomationDraft | null>(null)
@@ -1070,10 +1068,7 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
                 <button
                   type="button"
                   className="ml-auto text-xs underline underline-offset-2 hover:text-foreground transition-colors"
-                  onClick={() => {
-                    setSettingsTab('channels')
-                    setSettingsOpen(true)
-                  }}
+                  onClick={() => { void window.electronAPI.openSettingsWindow('channels') }}
                 >
                   前往渠道设置
                 </button>

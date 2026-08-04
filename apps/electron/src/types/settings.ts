@@ -371,6 +371,8 @@ export interface AppSettings {
   mainWindowState?: MainWindowState
   /** 独立任务/日程窗口状态（大小、位置、是否最大化） */
   planningWindowState?: MainWindowState
+  /** 独立设置窗口状态（大小、位置、是否最大化） */
+  settingsWindowState?: MainWindowState
 }
 
 /** 当前发布的 Onboarding 内容版本。提升该值可让所有用户重新完成新版引导。 */
@@ -399,6 +401,16 @@ export interface PersistedTabSettings {
   activeTabId: string | null
 }
 
+/** 设置标签页类型（设置窗口可打开的全部标签） */
+export type SettingsTab = 'general' | 'channels' | 'vision-relay' | 'proxy' | 'appearance' | 'about' | 'prompts' | 'tools' | 'bots' | 'tutorial' | 'shortcuts' | 'voice-input' | 'migration' | 'storage'
+
+/** 独立设置窗口可直达的标签页白名单（tutorial 依赖主窗口 Tab 系统，不在此列） */
+export const OPENABLE_SETTINGS_TABS: readonly SettingsTab[] = [
+  'general', 'channels', 'vision-relay', 'prompts', 'proxy',
+  'tools', 'bots', 'shortcuts', 'voice-input',
+  'migration', 'storage', 'appearance', 'about',
+] as const
+
 /** 设置 IPC 通道 */
 export const SETTINGS_IPC_CHANNELS = {
   GET: 'settings:get',
@@ -408,6 +420,14 @@ export const SETTINGS_IPC_CHANNELS = {
   ON_SYSTEM_THEME_CHANGED: 'settings:system-theme-changed',
   /** 用户手动切换主题时广播给所有窗口 */
   ON_THEME_SETTINGS_CHANGED: 'settings:theme-settings-changed',
+  /** 打开或聚焦单例独立设置窗口（可携带初始标签页） */
+  OPEN_WINDOW: 'settings:open-window',
+  /** 主进程请求渲染进程确认关闭（用于拦截未保存的渠道表单） */
+  REQUEST_CLOSE: 'settings:request-close',
+  /** 渲染进程确认可以关闭（弹窗确认后或无未保存内容时调用） */
+  CONFIRM_CLOSE: 'settings:confirm-close',
+  /** 主进程请求渲染进程切换到指定标签页（窗口已存在时深链生效） */
+  TAB_CHANGED: 'settings:tab-changed',
 } as const
 
 /** Scratch Pad IPC 通道 */

@@ -22,4 +22,6 @@ export interface UserProfile {
 export const USER_PROFILE_IPC_CHANNELS = {
   GET: 'user-profile:get',
   UPDATE: 'user-profile:update',
+  /** 用户档案变更时广播给所有窗口（跨窗口同步） */
+  CHANGED: 'user-profile:changed',
 } as const

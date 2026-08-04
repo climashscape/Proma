@@ -8,6 +8,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import type { SettingsTab } from '../types'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -370,6 +371,8 @@ export interface ElectronAPI {
 
   /** 更新用户档案 */
   updateUserProfile: (updates: Partial<UserProfile>) => Promise<UserProfile>
+  /** 订阅用户档案变更（跨窗口同步） */
+  onUserProfileChanged: (callback: (profile: UserProfile) => void) => () => void
 
   // ===== 应用设置相关 =====
 
@@ -1160,6 +1163,15 @@ export interface ElectronAPI {
   // ===== 任务 / 日程（Planning）=====
   /** 打开或聚焦单例独立任务/日程窗口。 */
   openPlanningWindow: () => Promise<void>
+  // ===== 设置（Settings）=====
+  /** 打开或聚焦单例独立设置窗口，可指定初始标签页。 */
+  openSettingsWindow: (tab?: SettingsTab) => Promise<void>
+  /** 订阅主进程的关闭请求（用于未保存内容确认）。 */
+  onSettingsCloseRequested: (callback: () => void) => () => void
+  /** 订阅主进程请求切换到指定标签页（窗口已存在时深链生效） */
+  onSettingsTabRequested: (callback: (tab: SettingsTab) => void) => () => void
+  /** 确认可关闭独立设置窗口。 */
+  confirmSettingsClose: () => Promise<void>
   listTodos: (query?: TodoListQuery) => Promise<Todo[]>
   createTodo: (input: CreateTodoInput) => Promise<Todo>
   /** 在主进程原子地关联项目并创建 Todo 的 Agent 会话。 */
@@ -1485,6 +1497,12 @@ const electronAPI: ElectronAPI = {
 
   updateUserProfile: (updates: Partial<UserProfile>) => {
     return ipcRenderer.invoke(USER_PROFILE_IPC_CHANNELS.UPDATE, updates)
+  },
+
+  onUserProfileChanged: (callback: (profile: UserProfile) => void) => {
+    const listener = (_: unknown, profile: UserProfile): void => callback(profile)
+    ipcRenderer.on(USER_PROFILE_IPC_CHANNELS.CHANGED, listener)
+    return () => { ipcRenderer.removeListener(USER_PROFILE_IPC_CHANNELS.CHANGED, listener) }
   },
 
   // 应用设置
@@ -2677,6 +2695,19 @@ const electronAPI: ElectronAPI = {
 
   // ===== 任务 / 日程（Planning）=====
   openPlanningWindow: () => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.OPEN_WINDOW),
+  // ===== 设置（Settings）=====
+  openSettingsWindow: (tab?: SettingsTab) => ipcRenderer.invoke(SETTINGS_IPC_CHANNELS.OPEN_WINDOW, tab),
+  onSettingsCloseRequested: (callback: () => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(SETTINGS_IPC_CHANNELS.REQUEST_CLOSE, listener)
+    return () => { ipcRenderer.removeListener(SETTINGS_IPC_CHANNELS.REQUEST_CLOSE, listener) }
+  },
+  onSettingsTabRequested: (callback: (tab: SettingsTab) => void) => {
+    const listener = (_: unknown, tab: SettingsTab): void => callback(tab)
+    ipcRenderer.on(SETTINGS_IPC_CHANNELS.TAB_CHANGED, listener)
+    return () => { ipcRenderer.removeListener(SETTINGS_IPC_CHANNELS.TAB_CHANGED, listener) }
+  },
+  confirmSettingsClose: () => ipcRenderer.invoke(SETTINGS_IPC_CHANNELS.CONFIRM_CLOSE),
   listTodos: (query?: TodoListQuery) => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.LIST_TODOS, query),
   createTodo: (input: CreateTodoInput) => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.CREATE_TODO, input),
   startTodoAgent: (input: StartTodoAgentInput) => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.START_TODO_AGENT, input),

@@ -95,10 +95,11 @@ const isVoiceDictationIndicatorWindow = new URLSearchParams(window.location.sear
 const isDetachedPreviewWindow = new URLSearchParams(window.location.search).get('window') === 'detached-preview'
 const isPlanningWindow = new URLSearchParams(window.location.search).get('window') === 'planning'
 const isAgentIslandWindow = new URLSearchParams(window.location.search).get('window') === 'agent-island'
-const isMainWindow = !isQuickTaskWindow && !isVoiceDictationIndicatorWindow && !isDetachedPreviewWindow && !isPlanningWindow && !isAgentIslandWindow
+const isSettingsWindow = new URLSearchParams(window.location.search).get('window') === 'settings'
+const isMainWindow = !isQuickTaskWindow && !isVoiceDictationIndicatorWindow && !isDetachedPreviewWindow && !isPlanningWindow && !isAgentIslandWindow && !isSettingsWindow
 
-// 主窗口和独立规划窗口均由内部面板管理滚动，避免页面本身出现第二层滚动。
-if (isMainWindow || isPlanningWindow) {
+// 主窗口、独立规划窗口和独立设置窗口均由内部面板管理滚动，避免页面本身出现第二层滚动。
+if (isMainWindow || isPlanningWindow || isSettingsWindow) {
   document.documentElement.classList.add('proma-main-window')
 }
 
@@ -169,7 +170,7 @@ function ThemeInitializer(): null {
  *
  * 从主进程加载 Agent 渠道/模型设置并写入 atoms。
  */
-function AgentSettingsInitializer(): null {
+function AgentSettingsInitializer({ quiet = false }: { quiet?: boolean } = {}): null {
   const setAgentChannelId = useSetAtom(agentChannelIdAtom)
   const setAgentModelId = useSetAtom(agentModelIdAtom)
   const setAgentChannelIds = useSetAtom(agentChannelIdsAtom)
@@ -308,8 +309,10 @@ function AgentSettingsInitializer(): null {
       .catch(console.error)
   }, [currentWorkspaceId, workspaces])
 
-  // 订阅主进程文件监听推送
+  // 订阅主进程文件监听推送（quiet：独立设置窗口只加载初始数据，不重复响应能力/文件变更）
   useEffect(() => {
+    if (quiet) return
+
     const unsubCapabilities = window.electronAPI.onCapabilitiesChanged(() => {
       // 查找当前工作区 slug
       const ws = workspaces.find((w) => w.id === currentWorkspaceId)
@@ -338,10 +341,10 @@ function AgentSettingsInitializer(): null {
     })
 
     return () => {
-      unsubCapabilities()
-      unsubFiles()
+      if (unsubCapabilities) unsubCapabilities()
+      if (unsubFiles) unsubFiles()
     }
-  }, [bumpCapabilities, bumpFiles, currentWorkspaceId, setAgentWorkspaces, workspaces])
+  }, [bumpCapabilities, bumpFiles, currentWorkspaceId, quiet, setAgentWorkspaces, workspaces])
 
   return null
 }
@@ -351,7 +354,7 @@ function AgentSettingsInitializer(): null {
  *
  * 订阅主进程推送的更新状态变化事件。
  */
-function UpdaterInitializer(): null {
+function UpdaterInitializer({ quiet = false }: { quiet?: boolean } = {}): null {
   const setUpdateStatus = useSetAtom(updateStatusAtom)
   const updateStatus = useAtomValue(updateStatusAtom)
   const notifiedDownloadVersionRef = useRef<string | null>(null)
@@ -362,7 +365,8 @@ function UpdaterInitializer(): null {
   }, [setUpdateStatus])
 
   useEffect(() => {
-    if (updateStatus.status !== 'downloaded') return
+    // quiet（独立设置窗口）：只维护更新状态供「关于/更新」页展示，不弹下载完成 toast
+    if (quiet || updateStatus.status !== 'downloaded') return
 
     const version = updateStatus.version || '新版本'
     if (notifiedDownloadVersionRef.current === version) return
@@ -682,7 +686,7 @@ function AgentListenersInitializer(): null {
  * 启动时从主进程加载所有工具信息到 atom。
  * 订阅 chat-tools.json 文件变更通知，自动刷新工具列表。
  */
-function ChatToolInitializer(): null {
+function ChatToolInitializer({ quiet = false }: { quiet?: boolean } = {}): null {
   const setChatTools = useSetAtom(chatToolsAtom)
 
   useEffect(() => {
@@ -697,12 +701,13 @@ function ChatToolInitializer(): null {
       window.electronAPI.getChatTools()
         .then((tools) => {
           setChatTools(tools)
-          toast.success('Chat 工具已更新')
+          // quiet（独立设置窗口）：只刷新列表，不重复弹 toast
+          if (!quiet) toast.success('Chat 工具已更新')
         })
         .catch((err: unknown) => console.error('[ChatToolInitializer] 刷新工具列表失败:', err))
     })
     return cleanup
-  }, [setChatTools])
+  }, [setChatTools, quiet])
 
   return null
 }
@@ -1121,6 +1126,22 @@ if (isQuickTaskWindow) {
       <React.StrictMode>
         <ThemeInitializer />
         <AgentIslandApp />
+      </React.StrictMode>
+    )
+  })
+} else if (isSettingsWindow) {
+  import('./components/settings/SettingsWindowApp').then(({ SettingsWindowApp }) => {
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <ThemeInitializer />
+        <AgentSettingsInitializer quiet />
+        <NotificationsInitializer />
+        <UiPreferencesInitializer />
+        <UpdaterInitializer quiet />
+        <ChatToolInitializer quiet />
+        <MarkdownFontSizeInitializer />
+        <SettingsWindowApp />
+        <Toaster position="bottom-right" />
       </React.StrictMode>
     )
   })

@@ -12,7 +12,7 @@
 import { useEffect, useCallback } from 'react'
 import { useAtomValue, useSetAtom, useAtom, useStore } from 'jotai'
 import { appModeAtom } from '@/atoms/app-mode'
-import { settingsOpenAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from '@/atoms/settings-tab'
+
 import { searchDialogOpenAtom } from '@/atoms/search-atoms'
 import {
   tabsAtom,
@@ -63,9 +63,6 @@ import {
  */
 export function GlobalShortcuts(): null {
   const [appMode, setAppMode] = useAtom(appModeAtom)
-  const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom)
-  const channelFormDirty = useAtomValue(channelFormDirtyAtom)
-  const setSettingsCloseRequested = useSetAtom(settingsCloseRequestedAtom)
   const [searchOpen, setSearchOpen] = useAtom(searchDialogOpenAtom)
   const [shortcutGuideOpen, setShortcutGuideOpen] = useAtom(shortcutGuideOpenAtom)
   const [sidebarCollapsed, setSidebarCollapsed] = useAtom(sidebarCollapsedAtom)
@@ -107,15 +104,6 @@ export function GlobalShortcuts(): null {
       setShortcutGuideOpen(false)
       return
     }
-    if (settingsOpen) {
-      // 渠道表单有未保存内容时，通知 SettingsPanel 弹出确认对话框
-      if (channelFormDirty) {
-        setSettingsCloseRequested(true)
-        return
-      }
-      setSettingsOpen(false)
-      return
-    }
     if (searchOpen) {
       setSearchOpen(false)
       return
@@ -123,7 +111,7 @@ export function GlobalShortcuts(): null {
 
     if (!activeTabId) return
     requestClose(activeTabId)
-  }, [shortcutGuideOpen, setShortcutGuideOpen, settingsOpen, setSettingsOpen, channelFormDirty, setSettingsCloseRequested, searchOpen, setSearchOpen, activeTabId, requestClose])
+  }, [shortcutGuideOpen, setShortcutGuideOpen, searchOpen, setSearchOpen, activeTabId, requestClose])
 
   // 监听菜单 IPC 事件（Cmd+W 被 Electron 菜单拦截后通过 IPC 转发）
   useEffect(() => {
@@ -136,10 +124,14 @@ export function GlobalShortcuts(): null {
 
   // ===== 快捷键 Handler =====
 
-  // Cmd+, → 打开设置
+  // Cmd+, → 打开独立设置窗口
   useShortcut(
     'open-settings',
-    useCallback(() => setSettingsOpen(true), [setSettingsOpen]),
+    useCallback(() => {
+      void window.electronAPI.openSettingsWindow().catch((error) => {
+        console.error('[设置] 打开独立窗口失败:', error)
+      })
+    }, []),
   )
 
   // Cmd+Shift+F / Ctrl+Shift+F → 全局搜索

@@ -19,9 +19,7 @@ import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { automationFormAtom } from '@/atoms/automation-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { interfaceVariantAtom } from '@/atoms/theme'
-import { settingsOpenAtom } from '@/atoms/settings-tab'
 import { WindowControls } from '@/components/WindowControls'
-import { SettingsPanel } from '@/components/settings/SettingsPanel'
 import { detectIsWindows, WINDOW_CONTROLS_INSET_RIGHT } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
@@ -50,8 +48,6 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
   const isPanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
   const automationForm = useAtomValue(automationFormAtom)
   const interfaceVariant = useAtomValue(interfaceVariantAtom)
-  const settingsOpen = useAtomValue(settingsOpenAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const isClassic = interfaceVariant === 'classic'
   // 定时任务表单打开时隐藏右侧文件面板，让中间区域扩展到全宽（表单内含自己的右栏配置）
   const activeView = useAtomValue(activeViewAtom)
@@ -181,7 +177,7 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
       <WindowControls />
 
       <div className="shell-bg relative h-screen w-screen overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-950 dark:to-zinc-900">
-        <div className={cn('flex h-full w-full', settingsOpen && 'hidden')} aria-hidden={settingsOpen}>
+        <div className={cn('flex h-full w-full')}>
             {/* 左侧边栏：可折叠，可拖拽调整宽度 */}
             <div className={cn(isClassic ? 'p-2 pr-0' : '', 'relative z-[60] crt-sidebar')}>
               <LeftSidebar width={clampedLeftSidebarWidth} noTransition={isDraggingLeftSidebar} />
@@ -233,12 +229,6 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
               </div>
             )}
         </div>
-        {settingsOpen && (
-          <div className="absolute inset-0 z-[60]">
-            <SettingsPanel onClose={() => setSettingsOpen(false)} />
-          </div>
-        )}
-
       </div>
     </AppShellProvider>
   )

@@ -27,6 +27,7 @@ import type {
   VoiceDictationToggleInput,
   MicPermissionResult,
 } from '../types'
+import { OPENABLE_SETTINGS_TABS, type SettingsTab } from '../types'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1631,12 +1632,39 @@ export function registerIpcHandlers(): void {
   // 更新用户档案
   ipcMain.handle(
     USER_PROFILE_IPC_CHANNELS.UPDATE,
-    async (_, updates: Partial<UserProfile>): Promise<UserProfile> => {
-      return updateUserProfile(updates)
+    async (event, updates: Partial<UserProfile>): Promise<UserProfile> => {
+      const profile = await updateUserProfile(updates)
+      // 广播给其他窗口（如独立设置窗口修改后同步主窗口左下角头像/用户名）
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (win.webContents.id !== event.sender.id) {
+          win.webContents.send(USER_PROFILE_IPC_CHANNELS.CHANGED, profile)
+        }
+      })
+      return profile
     }
   )
 
   // ===== 应用设置相关 =====
+
+  // 打开或聚焦独立设置窗口（可选携带初始标签页）
+  ipcMain.handle(
+    SETTINGS_IPC_CHANNELS.OPEN_WINDOW,
+    async (_, tab?: unknown): Promise<void> => {
+      const { showSettingsWindow } = await import('./lib/settings-window')
+      showSettingsWindow(typeof tab === 'string' && (OPENABLE_SETTINGS_TABS as readonly string[]).includes(tab) ? (tab as SettingsTab) : undefined)
+    }
+  )
+
+  // 渲染进程确认可关闭设置窗口（弹窗确认后或无未保存内容时调用）
+  ipcMain.handle(
+    SETTINGS_IPC_CHANNELS.CONFIRM_CLOSE,
+    async (event): Promise<void> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win || win.isDestroyed()) return
+      const { confirmSettingsWindowClose } = await import('./lib/settings-window')
+      confirmSettingsWindowClose(win)
+    }
+  )
 
   // 获取应用设置
   ipcMain.handle(

@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Star, Settings, Plus, Trash2, Pencil, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Bot, MessageSquare, MoreHorizontal, FolderOpen, FolderInput, FolderPlus, GripVertical, Clock, AlarmClock, ChevronRight, Blocks, GitBranch, Download, Loader2, RotateCw } from 'lucide-react'
+import { Pin, PinOff, Star, Settings, Plus, Trash2, Pencil, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Bot, MessageSquare, MoreHorizontal, FolderOpen, FolderInput, FolderPlus, GripVertical, Clock, AlarmClock, ChevronRight, Blocks, GitBranch, Download, Loader2, RotateCw, GraduationCap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -20,7 +20,7 @@ import { UserAvatar } from '@/components/chat/UserAvatar'
 import { activeViewAtom, agentSkillsTabAtom } from '@/atoms/active-view'
 import { automationFormAtom, automationsAtom } from '@/atoms/automation-atoms'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
-import { settingsOpenAtom, settingsTabAtom } from '@/atoms/settings-tab'
+
 import {
   conversationsAtom,
   currentConversationIdAtom,
@@ -74,6 +74,8 @@ import {
   sidebarCollapsedAtom,
   closeTab,
   updateTabTitle,
+  openTab,
+  TUTORIAL_TAB_ID,
   sessionViewStateMapAtom,
 } from '@/atoms/tab-atoms'
 import { userProfileAtom } from '@/atoms/user-profile'
@@ -721,9 +723,6 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const automations = useAtomValue(automationsAtom)
   const setAutomations = useSetAtom(automationsAtom)
   const automationCount = automations.length
-  const settingsOpen = useAtomValue(settingsOpenAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
-  const setSettingsTab = useSetAtom(settingsTabAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
   const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
@@ -812,13 +811,32 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const newChatShortcutLabel = getAcceleratorDisplay(getActiveAccelerator('new-session'))
 
   const handleOpenSettings = React.useCallback((): void => {
-    setSettingsOpen(true)
-  }, [setSettingsOpen])
+    void window.electronAPI.openSettingsWindow().catch((error) => {
+      console.error('[设置] 打开独立窗口失败:', error)
+    })
+  }, [])
 
   const handleUpdateButtonClick = React.useCallback((): void => {
-    setSettingsTab('about')
-    setSettingsOpen(true)
-  }, [setSettingsOpen, setSettingsTab])
+    void window.electronAPI.openSettingsWindow('about').catch((error) => {
+      console.error('[设置] 打开独立窗口失败:', error)
+    })
+  }, [])
+
+  const handleOpenTutorial = React.useCallback((): void => {
+    // 教程 Tab 已打开则关闭（toggle），未打开则打开；与 SettingsPanel 的 tutorial 分支逻辑一致
+    const existingTab = tabs.find((t) => t.id === TUTORIAL_TAB_ID)
+    if (existingTab) {
+      const result = closeTab(tabs, activeTabId, TUTORIAL_TAB_ID)
+      setTabs(result.tabs)
+      setActiveTabId(result.activeTabId)
+      return
+    }
+    const result = openTab(tabs, { type: 'tutorial', sessionId: TUTORIAL_TAB_ID, title: 'Proma 使用教程' })
+    setTabs(result.tabs)
+    setActiveTabId(result.activeTabId)
+    setAutomationForm({ open: false, draft: null })
+    setActiveView('conversations')
+  }, [activeTabId, setActiveView, setAutomationForm, setActiveTabId, setTabs, tabs])
 
   React.useEffect(() => {
     const id = window.setInterval(() => setRelativeTimeNow(Date.now()), 60_000)
@@ -1032,6 +1050,9 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
       .listAgentSessions()
       .then(setAgentSessions)
       .catch(console.error)
+    // 订阅用户档案变更（独立设置窗口修改后同步到主窗口）
+    const unsubProfile = window.electronAPI.onUserProfileChanged(setUserProfile)
+    return () => unsubProfile()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setConversations, setUserProfile, setAgentSessions])
 
@@ -1811,7 +1832,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
       if (processedQuickSwitchEventsRef.current.has(event)) return
       processedQuickSwitchEventsRef.current.add(event)
       if (event.isComposing) return
-      if (settingsOpen || searchDialogOpen) return
+      if (searchDialogOpen) return
 
       const number = getQuickSwitchNumber(event)
       if (number !== null && hasOnlyPrimaryModifier(event, isMac)) {
@@ -1875,7 +1896,6 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     }
   }, [
     isMac,
-    settingsOpen,
     searchDialogOpen,
     handleSelectAgentSession,
     handleSelectConversation,
@@ -2643,6 +2663,19 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
             <TooltipTrigger asChild>
               <button
                 type="button"
+                aria-label="Proma 教程"
+                onClick={handleOpenTutorial}
+                className="relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5"
+              >
+                <GraduationCap size={18} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Proma 教程</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
                 aria-label="打开设置"
                 onClick={handleOpenSettings}
                 className="relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5"
@@ -3177,6 +3210,14 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
               hideIcon
             />
           )}
+          <button
+            type="button"
+            aria-label="Proma 教程"
+            onClick={handleOpenTutorial}
+            className="relative flex size-7 flex-shrink-0 items-center justify-center rounded-[8px] text-foreground/40 transition-colors hover:bg-foreground/[0.05] hover:text-foreground/70"
+          >
+            <GraduationCap size={16} />
+          </button>
           <button
             type="button"
             aria-label="打开设置"

@@ -107,7 +107,7 @@ import {
   finalizeStreamingActivities,
 } from '@/atoms/agent-atoms'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
-import { settingsOpenAtom } from '@/atoms/settings-tab'
+
 import { longTextPasteAsAttachmentEnabledAtom } from '@/atoms/ui-preferences'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { todoPlanningGroupsAtom } from '@/atoms/planning-atoms'
@@ -542,7 +542,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const [agentRuntime, setAgentRuntime] = useAtom(agentRuntimeAtom)
   const [agentThinking, setAgentThinking] = useAtom(agentThinkingAtom)
   const agentEffort = useAtomValue(agentEffortAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const globalWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   // 从会话元数据派生 workspaceId：会话数据已加载时以自身为准，未加载时回退全局 atom
@@ -3156,7 +3155,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
                 <button
                   type="button"
                   className="text-xs underline underline-offset-2 hover:text-foreground transition-colors"
-                  onClick={() => setSettingsOpen(true)}
+                  onClick={() => { void window.electronAPI.openSettingsWindow('channels') }}
                 >
                   前往设置
                 </button>
