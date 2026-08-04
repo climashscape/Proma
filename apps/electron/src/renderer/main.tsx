@@ -26,6 +26,7 @@ import {
   initializeTheme,
 } from './atoms/theme'
 import { isDaytime } from './lib/solar'
+import { settingsOpenAtom, settingsTabAtom } from './atoms/settings-tab'
 import {
   agentChannelIdAtom,
   agentModelIdAtom,
@@ -396,6 +397,8 @@ function AgentSettingsInitializer(): null {
 function UpdaterInitializer(): null {
   const setUpdateStatus = useSetAtom(updateStatusAtom)
   const updateStatus = useAtomValue(updateStatusAtom)
+  const setSettingsOpen = useSetAtom(settingsOpenAtom)
+  const setSettingsTab = useSetAtom(settingsTabAtom)
   const notifiedDownloadVersionRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -435,7 +438,12 @@ function UpdaterInitializer(): null {
             <button
               type="button"
               className="flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-[0.96]"
-              onClick={() => { void window.electronAPI.openExternal('https://proma.cool/changelog') }}
+              onClick={() => {
+                toast.dismiss(toastId)
+                // 跳转到设置 → 关于 → Ch'iVerve 版本历史，而不是打开外部 changelog
+                setSettingsTab('about')
+                setSettingsOpen(true)
+              }}
             >
               查看更新
               <ArrowUpRight size={13} />
