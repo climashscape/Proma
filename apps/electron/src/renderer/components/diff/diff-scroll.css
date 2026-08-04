@@ -1,22 +1,24 @@
-/* Diff 滚动条 — overlay 在代码上方，不占布局空间 */
+/* Diff 滚动条 — overlay 在代码上方，不占布局空间。
+ * 尺寸/圆角/轨道引用全局 --scrollbar-* 变量（globals.css :root），颜色在使用处
+ * 写 hsl(var(--muted-foreground) / var(--opacity)) 以正确跟随主题。 */
 .diff-scroll::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--scrollbar-size, 6px);
+  height: var(--scrollbar-size, 6px);
 }
 
 .diff-scroll::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--scrollbar-track, transparent);
 }
 
 .diff-scroll::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.2);
-  border-radius: 3px;
+  background: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity, 0.3));
+  border-radius: var(--scrollbar-radius, 3px);
 }
 
 .diff-scroll::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.35);
+  background: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity, 0.5));
 }
 
 .diff-scroll::-webkit-scrollbar-corner {
-  background: transparent;
+  background: var(--scrollbar-track, transparent);
 }

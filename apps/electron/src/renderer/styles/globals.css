@@ -85,9 +85,28 @@
     --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.08), 0 2px 4px -1px rgb(0 0 0 / 0.05), 0 0 0 1px rgb(0 0 0 / 0.04);
     --shadow-lg: 0 12px 24px -6px rgb(0 0 0 / 0.12), 0 4px 8px -2px rgb(0 0 0 / 0.06), 0 0 0 1px rgb(0 0 0 / 0.04);
     --shadow-xl: 0 24px 48px -12px rgb(0 0 0 / 0.18), 0 12px 24px -6px rgb(0 0 0 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.05);
+
+    /* ===== 滚动条统一 token（单一事实来源）=====
+     * 全代码库滚动条架构：尺寸/圆角/轨道/透明度统一引用这组变量，
+     * 禁止在组件内硬编码滚动条值。
+     * ⚠️ 颜色必须在使用处写 hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity))，
+     *    不能预先算成 --scrollbar-thumb 变量——CSS 自定义属性在声明元素(:root)上替换 var()，
+     *    深色/彩色主题继承的是已计算值，主题色相会丢失。
+     * 6px 宽 + 3px radius = 完美胶囊形，与 999px 视觉一致。
+     * color-scheme：跟随应用主题 class，让系统默认滚动条/表单控件在深色下自动显深色，
+     * 并让 light-dark() 按应用主题（而非系统偏好）取分支。
+     */
+    --scrollbar-size: 6px;
+    --scrollbar-size-sm: 3px; /* 输入框等超细场景 */
+    --scrollbar-radius: 3px;
+    --scrollbar-track: transparent;
+    --scrollbar-thumb-opacity: 0.3;
+    --scrollbar-thumb-hover-opacity: 0.5;
+    color-scheme: light;
   }
 
   .dark {
+    color-scheme: dark;
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
     --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), inset 0 1px 0 0 hsl(0 0% 100% / 0.06);
     --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 2px 4px 0 rgb(0 0 0 / 0.35), inset 0 1px 0 0 hsl(0 0% 100% / 0.08);
@@ -1168,33 +1187,81 @@
   display: none;
 }
 
-/* 纤细滚动条 */
+/* 纤细滚动条 — 引用全局 --scrollbar-* 变量 */
 .scrollbar-thin,
 .scrollbar-thin > * {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+  scrollbar-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity)) var(--scrollbar-track);
 }
 .scrollbar-thin::-webkit-scrollbar,
 .scrollbar-thin > *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 .scrollbar-thin::-webkit-scrollbar-track,
 .scrollbar-thin > *::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--scrollbar-track);
 }
 .scrollbar-thin::-webkit-scrollbar-thumb,
 .scrollbar-thin > *::-webkit-scrollbar-thumb {
-  background-color: hsl(var(--muted-foreground) / 0.3);
-  border-radius: 3px;
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity));
+  border-radius: var(--scrollbar-radius);
 }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover,
 .scrollbar-thin > *::-webkit-scrollbar-thumb:hover {
-  background-color: hsl(var(--muted-foreground) / 0.5);
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity));
 }
 .scrollbar-thin::-webkit-scrollbar-corner,
 .scrollbar-thin > *::-webkit-scrollbar-corner {
-  background: transparent;
+  background: var(--scrollbar-track);
+}
+
+/* ===== 全局滚动条兜底 =====
+ * 未显式套 .scrollbar-thin / .scrollbar-none 的滚动容器，统一使用同一套视觉：
+ * 6px 胶囊、随主题配色。
+ * 注意：此兜底定义在工具类之后，但工具类（.scrollbar-none 的 display:none、
+ * .scrollbar-thin 的细化样式）优先级更高（更具体匹配目标元素），不会被覆盖。
+ * 横向纯滚动条（overflow-x）同样生效。
+ */
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity));
+  border-radius: var(--scrollbar-radius);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity));
+}
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+@media (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity)) var(--scrollbar-track);
+  }
+}
+
+/* ===== Radix ScrollArea 滚动条统一 =====
+ * ScrollArea 用 div 模拟滚动条（不走原生 ::-webkit-scrollbar），
+ * 这里把轨道/thumb 视觉与全局滚动条架构对齐：6px 胶囊、随主题配色、hover 变深。
+ */
+.scroll-area-thumb {
+  border-radius: var(--scrollbar-radius);
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity));
+  transition: background-color 0.15s ease;
+}
+.scroll-area-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity));
+}
+[data-radix-scroll-area-viewport] {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity)) var(--scrollbar-track);
 }
 
 /* 滚动区域上下渐隐遮罩 */
@@ -1230,29 +1297,29 @@
 .code-block-wrapper pre.shiki,
 .mermaid-block-scroll {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+  scrollbar-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity)) var(--scrollbar-track);
 }
 
 :is(.code-block-wrapper pre.shiki, .mermaid-block-scroll)::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 
 :is(.code-block-wrapper pre.shiki, .mermaid-block-scroll)::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--scrollbar-track);
 }
 
 :is(.code-block-wrapper pre.shiki, .mermaid-block-scroll)::-webkit-scrollbar-thumb {
-  background-color: hsl(var(--muted-foreground) / 0.3);
-  border-radius: 999px;
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity));
+  border-radius: var(--scrollbar-radius);
 }
 
 :is(.code-block-wrapper pre.shiki, .mermaid-block-scroll)::-webkit-scrollbar-thumb:hover {
-  background-color: hsl(var(--muted-foreground) / 0.5);
+  background-color: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity));
 }
 
 :is(.code-block-wrapper pre.shiki, .mermaid-block-scroll)::-webkit-scrollbar-corner {
-  background: transparent;
+  background: var(--scrollbar-track);
 }
 
 .code-block-wrapper pre.shiki code {

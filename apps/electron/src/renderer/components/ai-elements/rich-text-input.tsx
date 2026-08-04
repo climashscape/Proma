@@ -930,7 +930,18 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
           font-style: ${suggestionActive ? 'italic' : 'normal'};
         }
         .ProseMirror::-webkit-scrollbar {
-          width: 3px;
+          /* 输入框超细特例，引用全局 --scrollbar-size-sm */
+          width: var(--scrollbar-size-sm, 3px);
+        }
+        .ProseMirror::-webkit-scrollbar-thumb {
+          background: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity));
+          border-radius: var(--scrollbar-radius, 3px);
+        }
+        .ProseMirror::-webkit-scrollbar-thumb:hover {
+          background: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity));
+        }
+        .ProseMirror::-webkit-scrollbar-track {
+          background: var(--scrollbar-track);
         }
         .mention-chip {
           background-color: hsl(var(--primary) / 0.1);
