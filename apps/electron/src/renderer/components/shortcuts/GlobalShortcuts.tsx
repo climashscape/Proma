@@ -135,10 +135,14 @@ export function GlobalShortcuts(): null {
 
   // ===== 快捷键 Handler =====
 
-  // Cmd+, → 打开设置
+  // Cmd+, → 打开独立设置窗口
   useShortcut(
     'open-settings',
-    useCallback(() => setSettingsOpen(true), [setSettingsOpen]),
+    useCallback(() => {
+      void window.electronAPI.openSettingsWindow().catch((error) => {
+        console.error('[设置] 打开独立窗口失败:', error)
+      })
+    }, []),
   )
 
   // Cmd+Shift+F / Ctrl+Shift+F → 全局搜索

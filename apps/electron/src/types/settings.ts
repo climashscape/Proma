@@ -334,6 +334,8 @@ export interface AppSettings {
   mainWindowState?: MainWindowState
   /** 独立任务/日程窗口状态（大小、位置、是否最大化） */
   planningWindowState?: MainWindowState
+  /** 独立设置窗口状态（大小、位置、是否最大化） */
+  settingsWindowState?: MainWindowState
 }
 
 /** 主窗口大小、位置和最大化状态 */
@@ -360,6 +362,12 @@ export const SETTINGS_IPC_CHANNELS = {
   ON_SYSTEM_THEME_CHANGED: 'settings:system-theme-changed',
   /** 用户手动切换主题时广播给所有窗口 */
   ON_THEME_SETTINGS_CHANGED: 'settings:theme-settings-changed',
+  /** 打开或聚焦单例独立设置窗口（可携带初始标签页） */
+  OPEN_WINDOW: 'settings:open-window',
+  /** 主进程请求渲染进程确认关闭（用于拦截未保存的渠道表单） */
+  REQUEST_CLOSE: 'settings:request-close',
+  /** 渲染进程确认可以关闭（弹窗确认后或无未保存内容时调用） */
+  CONFIRM_CLOSE: 'settings:confirm-close',
 } as const
 
 /** Scratch Pad IPC 通道 */

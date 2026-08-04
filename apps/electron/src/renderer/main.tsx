@@ -102,10 +102,11 @@ const isVoiceDictationIndicatorWindow = new URLSearchParams(window.location.sear
 const isDetachedPreviewWindow = new URLSearchParams(window.location.search).get('window') === 'detached-preview'
 const isPlanningWindow = new URLSearchParams(window.location.search).get('window') === 'planning'
 const isAgentIslandWindow = new URLSearchParams(window.location.search).get('window') === 'agent-island'
-const isMainWindow = !isQuickTaskWindow && !isVoiceDictationIndicatorWindow && !isDetachedPreviewWindow && !isPlanningWindow && !isAgentIslandWindow
+const isSettingsWindow = new URLSearchParams(window.location.search).get('window') === 'settings'
+const isMainWindow = !isQuickTaskWindow && !isVoiceDictationIndicatorWindow && !isDetachedPreviewWindow && !isPlanningWindow && !isAgentIslandWindow && !isSettingsWindow
 
-// 主窗口和独立规划窗口均由内部面板管理滚动，避免页面本身出现第二层滚动。
-if (isMainWindow || isPlanningWindow) {
+// 主窗口、独立规划窗口和独立设置窗口均由内部面板管理滚动，避免页面本身出现第二层滚动。
+if (isMainWindow || isPlanningWindow || isSettingsWindow) {
   document.documentElement.classList.add('proma-main-window')
 }
 
@@ -1178,6 +1179,19 @@ if (isQuickTaskWindow) {
       <React.StrictMode>
         <ThemeInitializer />
         <AgentIslandApp />
+      </React.StrictMode>
+    )
+  })
+} else if (isSettingsWindow) {
+  import('./components/settings/SettingsWindowApp').then(({ SettingsWindowApp }) => {
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <ThemeInitializer />
+        <AgentSettingsInitializer />
+        <NotificationsInitializer />
+        <UiPreferencesInitializer />
+        <SettingsWindowApp />
+        <Toaster position="bottom-right" />
       </React.StrictMode>
     )
   })

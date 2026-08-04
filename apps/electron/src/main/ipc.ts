@@ -25,6 +25,7 @@ import type {
   VoiceDictationTestResult,
   MicPermissionResult,
 } from '../types'
+import type { SettingsTab } from '../renderer/atoms/settings-tab'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1632,6 +1633,33 @@ export function registerIpcHandlers(): void {
   )
 
   // ===== 应用设置相关 =====
+
+  // 独立设置窗口可直达的标签页白名单（tutorial 依赖主窗口 Tab 系统，不在此列）
+  const OPENABLE_SETTINGS_TABS: ReadonlySet<string> = new Set([
+    'general', 'channels', 'vision-relay', 'prompts', 'proxy',
+    'tools', 'bots', 'shortcuts', 'voice-input',
+    'migration', 'storage', 'appearance', 'about',
+  ])
+
+  // 打开或聚焦独立设置窗口（可选携带初始标签页）
+  ipcMain.handle(
+    SETTINGS_IPC_CHANNELS.OPEN_WINDOW,
+    async (_, tab?: unknown): Promise<void> => {
+      const { showSettingsWindow } = await import('./lib/settings-window')
+      showSettingsWindow(typeof tab === 'string' && OPENABLE_SETTINGS_TABS.has(tab) ? (tab as SettingsTab) : undefined)
+    }
+  )
+
+  // 渲染进程确认可关闭设置窗口（弹窗确认后或无未保存内容时调用）
+  ipcMain.handle(
+    SETTINGS_IPC_CHANNELS.CONFIRM_CLOSE,
+    async (event): Promise<void> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win || win.isDestroyed()) return
+      const { confirmSettingsWindowClose } = await import('./lib/settings-window')
+      confirmSettingsWindowClose(win)
+    }
+  )
 
   // 获取应用设置
   ipcMain.handle(

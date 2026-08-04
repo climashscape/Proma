@@ -20,10 +20,12 @@ import {
   Bot,
   GraduationCap,
   ArrowLeft,
+  X,
   Keyboard,
   Mic,
   HardDriveDownload,
   HardDrive,
+  ExternalLink,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ShortcutKeycaps } from "@/components/shortcuts/ShortcutKeycaps";
@@ -153,10 +155,13 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
 
 interface SettingsPanelProps {
   onClose?: () => void;
+  /** 独立窗口模式：隐藏“返回/独立窗口”入口，移除依赖主窗口 Tab 系统的教程页。 */
+  standalone?: boolean;
 }
 
 export function SettingsPanel({
   onClose,
+  standalone = false,
 }: SettingsPanelProps): React.ReactElement {
   const [activeTab, setActiveTab] = useAtom(settingsTabAtom);
   const channelFormDirty = useAtomValue(channelFormDirtyAtom);
@@ -262,9 +267,19 @@ export function SettingsPanel({
   }, [closeRequested, activeTab, setCloseRequested])
 
   // 工具 tab 两种模式都显示，Agent Skills / MCP 独立在侧边栏能力中心管理。
+  // 独立窗口无法打开主窗口 Tab，因此不提供 tutorial（Proma 教程）入口。
   const tabs = React.useMemo(() => {
-    if (appMode === "agent") {
-      return [
+    const allTabs = appMode === "agent"
+      ? [
+        ...BASE_TABS,
+        TOOLS_TAB,
+        VOICE_INPUT_TAB,
+        BOTS_TAB,
+        TUTORIAL_TAB,
+        SHORTCUTS_TAB,
+        ...TAIL_TABS,
+      ]
+      : [
         ...BASE_TABS,
         TOOLS_TAB,
         VOICE_INPUT_TAB,
@@ -273,30 +288,26 @@ export function SettingsPanel({
         SHORTCUTS_TAB,
         ...TAIL_TABS,
       ];
-    }
-    return [
-      ...BASE_TABS,
-      TOOLS_TAB,
-      VOICE_INPUT_TAB,
-      BOTS_TAB,
-      TUTORIAL_TAB,
-      SHORTCUTS_TAB,
-      ...TAIL_TABS,
-    ];
-  }, [appMode]);
+    return standalone ? allTabs.filter((tab) => tab.id !== 'tutorial') : allTabs;
+  }, [appMode, standalone]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-content-area text-foreground">
-      <div
-        aria-hidden="true"
-        className="titlebar-drag-region pointer-events-none h-[35px] flex-shrink-0 bg-[hsl(var(--sidebar-surface))]"
-      />
+      {/* 顶部不渲染空间条：与主窗口一致，左侧导航/右侧内容直接从顶部开始，WindowControls 悬浮在右上角
+          （拖拽由 SettingsWindowApp 的透明 drag region 提供）
+          内嵌模式保持原有 35px 拖拽条 */}
+      {!standalone && (
+        <div
+          aria-hidden="true"
+          className="titlebar-drag-region pointer-events-none h-[35px] flex-shrink-0 bg-[hsl(var(--sidebar-surface))]"
+        />
+      )}
 
       {/* 主体：左导航 + 右内容 */}
       <div className="flex flex-1 min-h-0">
         {/* 左侧 Tab 导航 */}
         <div className="flex h-full min-h-0 w-[277px] flex-shrink-0 flex-col border-r border-border/80 bg-[hsl(var(--sidebar-surface))] dark:border-border/70">
-          <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pt-5 scrollbar-thin">
+          <nav className={cn('flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 scrollbar-thin', standalone ? 'pt-[40px]' : 'pt-5')}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -317,12 +328,22 @@ export function SettingsPanel({
             ))}
           </nav>
           <div className="flex-shrink-0 p-3">
+            {!standalone && (
+              <button
+                type="button"
+                onClick={() => { void window.electronAPI.openSettingsWindow(activeTab) }}
+                className="group flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+              >
+                <ExternalLink size={16} />
+                <span>独立窗口</span>
+              </button>
+            )}
             <button
               onClick={handleClose}
               className="group flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
             >
-              <ArrowLeft size={16} />
-              <span>返回</span>
+              {standalone ? <X size={16} /> : <ArrowLeft size={16} />}
+              <span>{standalone ? '关闭' : '返回'}</span>
               <span className="ml-auto hidden group-hover:inline-flex">
                 <ShortcutKeycaps accelerator="Esc" />
               </span>
@@ -332,7 +353,7 @@ export function SettingsPanel({
 
         {/* 右侧内容区域 */}
         <ScrollArea className="min-w-0 flex-1 bg-content-area">
-          <div className="mx-auto w-full max-w-[1080px] px-5 py-8 pb-12 sm:px-8">
+          <div className={cn('mx-auto w-full max-w-[1080px] px-5 pb-12 sm:px-8', standalone ? 'pt-[40px]' : 'py-8')}>
             {renderTabContent(activeTab)}
           </div>
         </ScrollArea>

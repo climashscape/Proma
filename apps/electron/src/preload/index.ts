@@ -8,6 +8,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import type { SettingsTab } from '../renderer/atoms/settings-tab'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1156,6 +1157,13 @@ export interface ElectronAPI {
   // ===== 任务 / 日程（Planning）=====
   /** 打开或聚焦单例独立任务/日程窗口。 */
   openPlanningWindow: () => Promise<void>
+  // ===== 设置（Settings）=====
+  /** 打开或聚焦单例独立设置窗口，可指定初始标签页。 */
+  openSettingsWindow: (tab?: SettingsTab) => Promise<void>
+  /** 订阅主进程的关闭请求（用于未保存内容确认）。 */
+  onSettingsCloseRequested: (callback: () => void) => () => void
+  /** 确认可关闭独立设置窗口。 */
+  confirmSettingsClose: () => Promise<void>
   listTodos: (query?: TodoListQuery) => Promise<Todo[]>
   createTodo: (input: CreateTodoInput) => Promise<Todo>
   /** 在主进程原子地关联项目并创建 Todo 的 Agent 会话。 */
@@ -2665,6 +2673,14 @@ const electronAPI: ElectronAPI = {
 
   // ===== 任务 / 日程（Planning）=====
   openPlanningWindow: () => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.OPEN_WINDOW),
+  // ===== 设置（Settings）=====
+  openSettingsWindow: (tab?: SettingsTab) => ipcRenderer.invoke(SETTINGS_IPC_CHANNELS.OPEN_WINDOW, tab),
+  onSettingsCloseRequested: (callback: () => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(SETTINGS_IPC_CHANNELS.REQUEST_CLOSE, listener)
+    return () => { ipcRenderer.removeListener(SETTINGS_IPC_CHANNELS.REQUEST_CLOSE, listener) }
+  },
+  confirmSettingsClose: () => ipcRenderer.invoke(SETTINGS_IPC_CHANNELS.CONFIRM_CLOSE),
   listTodos: (query?: TodoListQuery) => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.LIST_TODOS, query),
   createTodo: (input: CreateTodoInput) => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.CREATE_TODO, input),
   startTodoAgent: (input: StartTodoAgentInput) => ipcRenderer.invoke(PLANNING_IPC_CHANNELS.START_TODO_AGENT, input),

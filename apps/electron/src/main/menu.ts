@@ -50,7 +50,8 @@ export function createApplicationMenu(): Menu {
             } catch {
               // 窗口尚未加载页面时沿用主窗口的安全默认行为。
             }
-            if (windowType === 'planning') {
+            if (windowType === 'planning' || windowType === 'settings') {
+              // planning/settings 独立窗口直接关闭；settings 窗口的 close 事件会先询问未保存内容。
               win.close()
               return
             }
