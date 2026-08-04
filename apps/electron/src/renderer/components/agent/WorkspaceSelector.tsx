@@ -20,7 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { projectListHeightAtom } from '@/atoms/sidebar-atoms'
+import { projectListHeightAtom, collapsedWorkspaceIdsAtom } from '@/atoms/sidebar-atoms'
 import { useProjectActions } from '@/hooks/useProjectActions'
 import { LocalProjectBadge } from './LocalProjectBadge'
 import { agentSessionsAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
@@ -31,6 +31,7 @@ export function WorkspaceSelector(): React.ReactElement {
   const [, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [, setAgentSessions] = useAtom(agentSessionsAtom)
   const [listHeight, setListHeight] = useAtom(projectListHeightAtom)
+  const [, setCollapsedWorkspaceIds] = useAtom(collapsedWorkspaceIdsAtom)
 
   // 高度拖拽调整
   const listRef = React.useRef<HTMLDivElement>(null)
@@ -182,6 +183,14 @@ export function WorkspaceSelector(): React.ReactElement {
       ])
       setWorkspaces(remaining)
       setAgentSessions(sessions)
+
+      // 清理折叠状态残留：被删除项目不再需要保留折叠记录（与 LeftSidebar 删除路径保持一致）
+      setCollapsedWorkspaceIds((prev) => {
+        if (!prev.has(deleteTargetId)) return prev
+        const next = new Set(prev)
+        next.delete(deleteTargetId)
+        return next
+      })
 
       if (deleteTargetId === currentWorkspaceId && remaining.length > 0) {
         const defaultWorkspace = remaining.find((workspace) => workspace.slug === 'default')
