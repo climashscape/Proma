@@ -1,9 +1,9 @@
 /**
  * ScrollMinimap — 消息导航迷你地图 + 滚动进度条
  *
- * 在消息区域右侧显示：
- * 1. 短横杠代表每条消息的位置（迷你地图），悬浮时弹出消息预览列表
- * 2. 可拖拽的滚动进度条，提供丝滑的滚动体验
+ * 分两部分：
+ * 1. 迷你地图消息导航（短横杠 + 悬浮预览面板）——在消息区域左侧垂直居中
+ * 2. 可拖拽的滚动进度条——在消息区域右侧边缘，作为常规滚动条
  * 必须放在 StickToBottom（Conversation）内部使用。
  */
 
@@ -356,22 +356,51 @@ export function ScrollMinimap({ items }: ScrollMinimapProps): React.ReactElement
   const thumbTopPct = scrollRange > 0 ? (scrollTop / scrollRange) * (100 - thumbHeightPct) : 0
 
   return (
-    <div className="absolute right-1 top-0 bottom-0 z-30 flex pointer-events-none">
-      {/* ── 迷你地图悬停区域（面板 + 横杠） ── */}
-      <div className="flex items-start h-full">
-        {/* 展开面板 */}
-        {hovered && (
-          <div
-            className={cn(
-              'mr-1 w-[280px] rounded-lg border bg-popover shadow-xl origin-top-right flex flex-col overflow-hidden pointer-events-auto',
-              isLeaving
-                ? 'animate-out fade-out-0 zoom-out-95 duration-75'
-                : 'animate-in fade-in-0 zoom-in-95 duration-150'
-            )}
-            style={{ maxHeight: 'min(420px, 60vh)', marginTop: 12 }}
-            onMouseEnter={handleMouseEnter}
-            onMouseLeave={handleMouseLeave}
-          >
+    <>
+    {/* ── 迷你地图消息导航（左侧垂直居中；hover 面板 absolute 定位在横杠右侧，不撑大容器高度避免弹窗跳动） ── */}
+    <div className="absolute left-1 top-1/2 -translate-y-1/2 z-30 pointer-events-none">
+      <div
+        className="relative mt-3 flex-shrink-0 pointer-events-auto"
+        style={{ width: 24, height: barCount * MINIMAP_BAR_SPACING }}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+          {Array.from({ length: barCount }, (_, i) => {
+            const start = Math.floor((i * items.length) / barCount)
+            const end = Math.floor(((i + 1) * items.length) / barCount)
+            const group = items.slice(start, end)
+            const isVisible = group.some((it) => visibleIds.has(it.id))
+            const hasUser = group.some((it) => it.role === 'user')
+            const top = ((i + 0.5) / barCount) * 100
+            return (
+              <div
+                key={i}
+                className={cn(
+                  'absolute left-1 h-[2px] w-[20px] rounded-full transition-colors',
+                  isVisible
+                    ? 'bg-primary dark:bg-primary/70 minimap-visible-indicator'
+                    : hasUser
+                      ? 'bg-primary/25 dark:bg-primary/15'
+                      : 'bg-primary/40 dark:bg-primary/25'
+                )}
+                style={{ top: `${top}%` }}
+              />
+            )
+          })}
+
+          {/* 展开面板（hover 时 absolute 定位在横杠右侧、面向消息区展开；脱离文档流，容器高度不变） */}
+          {hovered && (
+            <div
+              className={cn(
+                'absolute left-full top-0 ml-1 w-[280px] rounded-lg border bg-popover shadow-xl origin-top-left flex flex-col overflow-hidden pointer-events-auto',
+                isLeaving
+                  ? 'animate-out fade-out-0 zoom-out-95 duration-75'
+                  : 'animate-in fade-in-0 zoom-in-95 duration-150'
+              )}
+              style={{ maxHeight: 'min(420px, 60vh)' }}
+              onMouseEnter={handleMouseEnter}
+              onMouseLeave={handleMouseLeave}
+            >
             {/* 标题栏 */}
             <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
               <span className="text-xs font-medium text-popover-foreground/70">消息导航</span>
@@ -425,64 +454,39 @@ export function ScrollMinimap({ items }: ScrollMinimapProps): React.ReactElement
                 ))
               )}
             </div>
-          </div>
-        )}
-
-        {/* ── 迷你地图横杠 —— 只有这里触发面板展开 ── */}
-        <div
-          className="relative mt-3 flex-shrink-0 pointer-events-auto"
-          style={{ width: 24, height: barCount * MINIMAP_BAR_SPACING }}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {Array.from({ length: barCount }, (_, i) => {
-            const start = Math.floor((i * items.length) / barCount)
-            const end = Math.floor(((i + 1) * items.length) / barCount)
-            const group = items.slice(start, end)
-            const isVisible = group.some((it) => visibleIds.has(it.id))
-            const hasUser = group.some((it) => it.role === 'user')
-            const top = ((i + 0.5) / barCount) * 100
-            return (
-              <div
-                key={i}
-                className={cn(
-                  'absolute left-1 h-[2px] w-[20px] rounded-full transition-colors',
-                  isVisible
-                    ? 'bg-primary dark:bg-primary/70 minimap-visible-indicator'
-                    : hasUser
-                      ? 'bg-primary/25 dark:bg-primary/15'
-                      : 'bg-primary/40 dark:bg-primary/25'
-                )}
-                style={{ top: `${top}%` }}
-              />
-            )
-          })}
-        </div>
+            </div>
+          )}
+      </div>
       </div>
 
-      {/* ── 滚动进度条 ── */}
-      <div className="relative ml-[4px] py-4 flex-shrink-0 pointer-events-auto" style={{ width: SCROLL_PROGRESS_WIDTH }}>
+      {/* ── 滚动进度条（右侧边缘全高，作为常规滚动条） ── */}
+      <div className="absolute right-1 top-0 bottom-0 z-30 flex items-stretch pointer-events-none">
         <div
-          ref={trackRef}
-          className="relative h-full rounded-full cursor-pointer scroll-progress-track"
-          onMouseDown={handleTrackMouseDown}
+          className="relative py-4 flex-shrink-0 pointer-events-auto"
+          style={{ width: SCROLL_PROGRESS_WIDTH }}
         >
           <div
-            className={cn(
-              'absolute left-0 right-0 rounded-full transition-colors duration-100 scroll-progress-thumb',
-              isDragging
-                ? 'scroll-progress-thumb-active cursor-grabbing'
-                : 'cursor-grab'
-            )}
-            style={{
-              height: `${thumbHeightPct}%`,
-              top: `${thumbTopPct}%`,
-            }}
-            onMouseDown={handleThumbMouseDown}
-          />
+            ref={trackRef}
+            className="relative h-full rounded-full cursor-pointer scroll-progress-track"
+            onMouseDown={handleTrackMouseDown}
+          >
+            <div
+              className={cn(
+                'absolute left-0 right-0 rounded-full transition-colors duration-100 scroll-progress-thumb',
+                isDragging
+                  ? 'scroll-progress-thumb-active cursor-grabbing'
+                  : 'cursor-grab'
+              )}
+              style={{
+                height: `${thumbHeightPct}%`,
+                top: `${thumbTopPct}%`,
+              }}
+              onMouseDown={handleThumbMouseDown}
+            />
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
