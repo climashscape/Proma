@@ -305,9 +305,8 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   // 无关 bump 时 effect 重启、在途 load() 被取消（loading 卡死路径）。
   const isUnrelatedRefreshRef = React.useRef(isUnrelatedRefresh)
   isUnrelatedRefreshRef.current = isUnrelatedRefresh
-  // 渲染期同步的最新版本，供主 load 完成时判断"加载期间是否发生过 bump"
-  const refreshVersionRef = React.useRef(refreshVersion)
-  refreshVersionRef.current = refreshVersion
+  // 不再需要渲染期版本 ref：静默刷新写回时已通过递增 loadSeqRef 使在途旧 load 失效，
+  // 无需再做版本比对（版本比对会在无关 bump 时误杀主 load 结果且无人补位 → 卡 loading）。
   // 无关 bump 时冻结 previewContentVersion，避免 cacheKey/PierreFile 误判内容变化重算。
   // 渲染期写 ref 在此安全：isUnrelatedRefresh 由 atom 派生，同次渲染内 Jotai 快照一致，
   // 并发渲染两次读到的值相同，ref 最终值稳定。
@@ -646,7 +645,6 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     // 通过 ref 读取，避免把 isUnrelatedRefresh 放进依赖导致 effect 重启。
     if (isUnrelatedRefreshRef.current) return
     const seq = ++loadSeqRef.current
-    const loadStartVersion = refreshVersion
     let cancelled = false
 
     // 所有文件类型均可缓存（含 PDF/DOCX/Office/Image）
@@ -704,7 +702,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
           if (previewOnly) {
             if (isPdf) {
               const result = await window.electronAPI.preparePdfPreview(filePath, fileAccess)
-              if (cancelled || seq !== loadSeqRef.current || loadStartVersion !== refreshVersionRef.current) return
+              if (cancelled || seq !== loadSeqRef.current) return
               const src = result?.tmpHtmlUrl ?? ''
               setPdfSrc(src)
               cacheSet(cacheKey, { oldContent: '', newContent: '', pdfSrc: src })
@@ -712,7 +710,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
             }
             if (isImage) {
               const resolved = await window.electronAPI.resolveFilePath(filePath, fileAccess)
-              if (cancelled || seq !== loadSeqRef.current || loadStartVersion !== refreshVersionRef.current) return
+              if (cancelled || seq !== loadSeqRef.current) return
               if (resolved) {
                 setImagePath(filePath)
                 setImageDataUrl(resolved.url)
@@ -726,7 +724,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
             }
             if (isDocx) {
               const result = await window.electronAPI.docxToHtml(filePath, fileAccess)
-              if (cancelled || seq !== loadSeqRef.current || loadStartVersion !== refreshVersionRef.current) return
+              if (cancelled || seq !== loadSeqRef.current) return
               const html = DOMPurify.sanitize(result?.html ?? '')
               setDocxHtml(html)
               cacheSet(cacheKey, { oldContent: '', newContent: '', docxHtml: html })
@@ -734,7 +732,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
             }
             if (isOfficePreview) {
               const result = await window.electronAPI.officeToHtml(filePath, fileAccess)
-              if (cancelled || seq !== loadSeqRef.current || loadStartVersion !== refreshVersionRef.current) return
+              if (cancelled || seq !== loadSeqRef.current) return
               const html = DOMPurify.sanitize(result?.html ?? '')
               const text = result?.text ?? ''
               setOfficeHtml(html)
@@ -746,11 +744,11 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
               return
             }
             const result = await window.electronAPI.resolveAndReadFile(filePath, fileAccess)
-            if (cancelled || seq !== loadSeqRef.current || loadStartVersion !== refreshVersionRef.current) return
+            if (cancelled || seq !== loadSeqRef.current) return
             content = result?.content ?? ''
           } else {
             const result = await window.electronAPI.getDiffContents({ dirPath, filePath, gitRoot, sessionId, baseRef })
-            if (cancelled || seq !== loadSeqRef.current || loadStartVersion !== refreshVersionRef.current) return
+            if (cancelled || seq !== loadSeqRef.current) return
             content = result?.newContent ?? ''
             old = result?.oldContent ?? ''
           }
@@ -764,12 +762,12 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
         }
 
         if (previewOnly && !MD_EXTS.has(ext) && content) {
-          if (!cancelled && seq === loadSeqRef.current && loadStartVersion === refreshVersionRef.current) setLoading(false)
+          if (!cancelled && seq === loadSeqRef.current) setLoading(false)
         }
       } catch {
         // 加载失败静默处理
       } finally {
-        if (!cancelled && seq === loadSeqRef.current && loadStartVersion === refreshVersionRef.current) setLoading(false)
+        if (!cancelled && seq === loadSeqRef.current) setLoading(false)
       }
     }
 
