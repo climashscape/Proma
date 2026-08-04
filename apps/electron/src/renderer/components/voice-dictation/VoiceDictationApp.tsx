@@ -614,7 +614,7 @@ export function VoiceDictationApp({ embedded = false }: { embedded?: boolean }):
             <div className="h-px bg-border/70" />
             <div
               ref={transcriptBoxRef}
-              className="box-border min-h-[34px] px-3 pt-2.5 pb-2.5 text-[15px] leading-7 text-foreground [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              className="box-border min-h-[34px] px-3 pt-2.5 pb-2.5 text-[15px] leading-7 text-foreground scrollbar-none"
               style={{
                 maxHeight: transcriptMaxHeight ?? undefined,
                 overflowY: 'auto',

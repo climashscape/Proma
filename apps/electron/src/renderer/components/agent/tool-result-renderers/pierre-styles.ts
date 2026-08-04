@@ -5,9 +5,36 @@
  * 供 edit-result / write-result / read-result 等工具渲染器复用。
  */
 
+/**
+ * 滚动条共享样式 — 尺寸/圆角/轨道/透明度引用全局 --scrollbar-* 变量（globals.css :root）。
+ * 颜色在使用处写 hsl(var(--muted-foreground) / var(--opacity))：--muted-foreground 经 host
+ * 继承链传入 shadow root，随主题（.dark/.theme-*）正确变化；不能预先算成 --scrollbar-thumb 变量。
+ */
+export const PIERRE_SCROLLBAR_CSS = `
+  [data-code]::-webkit-scrollbar {
+    width: var(--scrollbar-size, 6px);
+    height: var(--scrollbar-size, 6px);
+  }
+  [data-code]::-webkit-scrollbar-track {
+    background: var(--scrollbar-track, transparent);
+  }
+  [data-code]::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / var(--scrollbar-thumb-opacity, 0.3));
+    border-radius: var(--scrollbar-radius, 3px);
+  }
+  [data-code]::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / var(--scrollbar-thumb-hover-opacity, 0.5));
+  }
+  [data-code]::-webkit-scrollbar-corner {
+    background: var(--scrollbar-track, transparent);
+  }
+`
+
 /** Pierre diffs 主题颜色 CSS — 注入到 unsafeCSS */
 export const PIERRE_DIFF_CSS = `
   :root, :host {
+    /* 覆盖 pierre 库默认 color-scheme: light dark，让 light-dark() 跟随应用主题 class 而非系统偏好 */
+    color-scheme: inherit;
     --diffs-bg: transparent;
     --diffs-addition-base: rgb(67,167,71);
     --diffs-deletion-base: rgb(206,66,52);
@@ -15,26 +42,8 @@ export const PIERRE_DIFF_CSS = `
     --diffs-deletion-bg: light-dark(rgb(248,231,230), rgb(39,22,20));
     --diffs-separator-bg: hsl(var(--background));
     --diffs-gap-style: 3px solid hsl(var(--content-area));
-    --diffs-scrollbar-thumb: light-dark(hsl(var(--muted-foreground) / 0.6), hsl(var(--muted-foreground) / 0.2));
-    --diffs-scrollbar-thumb-hover: light-dark(hsl(var(--muted-foreground) / 0.8), hsl(var(--muted-foreground) / 0.35));
   }
-  [data-code]::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  [data-code]::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  [data-code]::-webkit-scrollbar-thumb {
-    background: var(--diffs-scrollbar-thumb);
-    border-radius: 3px;
-  }
-  [data-code]::-webkit-scrollbar-thumb:hover {
-    background: var(--diffs-scrollbar-thumb-hover);
-  }
-  [data-code]::-webkit-scrollbar-corner {
-    background: transparent;
-  }
+  ${PIERRE_SCROLLBAR_CSS}
   [data-separator=line-info],
   [data-separator=line-info] [data-separator-wrapper],
   [data-separator=line-info] [data-separator-content],
@@ -71,27 +80,10 @@ export const PIERRE_DIFF_CSS = `
 /** Pierre File 组件的 CSS — 纯代码预览（无 diff 行类型） */
 export const PIERRE_FILE_CSS = `
   :root, :host {
+    color-scheme: inherit;
     --diffs-bg: transparent;
-    --diffs-scrollbar-thumb: light-dark(hsl(var(--muted-foreground) / 0.6), hsl(var(--muted-foreground) / 0.2));
-    --diffs-scrollbar-thumb-hover: light-dark(hsl(var(--muted-foreground) / 0.8), hsl(var(--muted-foreground) / 0.35));
   }
-  [data-code]::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  [data-code]::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  [data-code]::-webkit-scrollbar-thumb {
-    background: var(--diffs-scrollbar-thumb);
-    border-radius: 3px;
-  }
-  [data-code]::-webkit-scrollbar-thumb:hover {
-    background: var(--diffs-scrollbar-thumb-hover);
-  }
-  [data-code]::-webkit-scrollbar-corner {
-    background: transparent;
-  }
+  ${PIERRE_SCROLLBAR_CSS}
   [data-column-number],
   [data-gutter] {
     background-color: hsl(var(--content-area)) !important;
