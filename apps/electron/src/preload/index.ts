@@ -74,6 +74,7 @@ import type {
   SystemProxyDetectResult,
   GitHubRelease,
   GitHubReleaseListOptions,
+  GitHubReleaseQueryOptions,
   PermissionRequest,
   PermissionResponse,
   PromaPermissionMode,
@@ -911,9 +912,9 @@ export interface ElectronAPI {
   }
 
   // GitHub Release
-  getLatestRelease: () => Promise<GitHubRelease | null>
+  getLatestRelease: (options?: GitHubReleaseQueryOptions) => Promise<GitHubRelease | null>
   listReleases: (options?: GitHubReleaseListOptions) => Promise<GitHubRelease[]>
-  getReleaseByTag: (tag: string) => Promise<GitHubRelease | null>
+  getReleaseByTag: (tag: string, options?: GitHubReleaseQueryOptions) => Promise<GitHubRelease | null>
 
   // 工作区文件变化通知
   onCapabilitiesChanged: (callback: () => void) => () => void
@@ -2212,16 +2213,16 @@ const electronAPI: ElectronAPI = {
   },
 
   // GitHub Release
-  getLatestRelease: () => {
-    return ipcRenderer.invoke(GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE)
+  getLatestRelease: (options) => {
+    return ipcRenderer.invoke(GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE, options)
   },
 
   listReleases: (options) => {
     return ipcRenderer.invoke(GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES, options)
   },
 
-  getReleaseByTag: (tag) => {
-    return ipcRenderer.invoke(GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG, tag)
+  getReleaseByTag: (tag, options) => {
+    return ipcRenderer.invoke(GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG, tag, options)
   },
 
   // ===== 飞书集成 =====

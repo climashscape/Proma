@@ -75,6 +75,7 @@ import type {
   SystemProxyDetectResult,
   GitHubRelease,
   GitHubReleaseListOptions,
+  GitHubReleaseQueryOptions,
   PermissionResponse,
   PromaPermissionMode,
   AskUserResponse,
@@ -3869,8 +3870,8 @@ export function registerIpcHandlers(): void {
   // 获取最新 Release
   ipcMain.handle(
     GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE,
-    async (): Promise<GitHubRelease | null> => {
-      return getLatestRelease()
+    async (_, options?: GitHubReleaseQueryOptions): Promise<GitHubRelease | null> => {
+      return getLatestRelease(options)
     }
   )
 
@@ -3885,8 +3886,8 @@ export function registerIpcHandlers(): void {
   // 获取指定版本的 Release
   ipcMain.handle(
     GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG,
-    async (_, tag: string): Promise<GitHubRelease | null> => {
-      return getReleaseByTag(tag)
+    async (_, tag: string, options?: GitHubReleaseQueryOptions): Promise<GitHubRelease | null> => {
+      return getReleaseByTag(tag, options)
     }
   )
 

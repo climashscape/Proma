@@ -191,13 +191,13 @@ export function VersionHistory(): React.ReactElement {
     <div className="space-y-4">
       <VersionHistorySection
         title="Ch'iVerve 版本历史"
-        subtitle="climashscape/Proma · 专用构建"
+        subtitle={`${CHIVERVE_GITHUB_REPO.owner}/${CHIVERVE_GITHUB_REPO.repo} · 专用构建`}
         repo={CHIVERVE_GITHUB_REPO}
         latestBadge="最新"
       />
       <VersionHistorySection
         title="官方版本历史"
-        subtitle="proma-ai/Proma · 开源版"
+        subtitle={`${OFFICIAL_GITHUB_REPO.owner}/${OFFICIAL_GITHUB_REPO.repo} · 开源版`}
         repo={OFFICIAL_GITHUB_REPO}
         latestBadge="官方最新"
       />

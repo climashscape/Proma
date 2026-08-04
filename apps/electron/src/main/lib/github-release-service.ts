@@ -8,6 +8,7 @@
 import type {
   GitHubRelease,
   GitHubReleaseListOptions,
+  GitHubReleaseQueryOptions,
   GitHubRepoRef,
 } from '@proma/shared'
 import {
@@ -40,8 +41,8 @@ const tagCache = new Map<string, { data: GitHubRelease; timestamp: number }>()
 /** 缓存有效期（30 分钟） */
 const CACHE_TTL = 30 * 60 * 1000
 
-/** Rate limit 冷却标记 */
-let rateLimitUntil = 0
+/** Rate limit 冷却标记（按仓库隔离，避免一个仓库限流拖累另一个区块） */
+const rateLimitUntilMap = new Map<string, number>()
 
 /**
  * 从 GitHub API 获取 releases
@@ -51,8 +52,9 @@ let rateLimitUntil = 0
  * @returns Release 数据
  */
 async function fetchFromGitHub<T>(endpoint: string, repo?: GitHubRepoRef): Promise<T> {
+  const rk = repoKey(repo)
   // Rate limit 冷却期内直接跳过
-  if (Date.now() < rateLimitUntil) {
+  if (Date.now() < (rateLimitUntilMap.get(rk) ?? 0)) {
     throw new Error('GitHub API 请求过于频繁，请稍后再试')
   }
 
@@ -69,9 +71,9 @@ async function fetchFromGitHub<T>(endpoint: string, repo?: GitHubRepoRef): Promi
   })
 
   if (response.status === 403 || response.status === 429) {
-    // Rate limited — 冷却 15 分钟
-    rateLimitUntil = Date.now() + 15 * 60 * 1000
-    throw new Error('GitHub API 请求过于频繁，请 15 分钟后重试')
+    // Rate limited — 该仓库冷却 15 分钟
+    rateLimitUntilMap.set(rk, Date.now() + 15 * 60 * 1000)
+    throw new Error(`GitHub API 请求过于频繁（${rk}），请 15 分钟后重试`)
   }
 
   if (!response.ok) {
@@ -89,7 +91,7 @@ async function fetchFromGitHub<T>(endpoint: string, repo?: GitHubRepoRef): Promi
  * @param options - 可选：目标仓库
  * @returns 最新的 Release，如果没有则返回 null
  */
-export async function getLatestRelease(options: { repo?: GitHubRepoRef } = {}): Promise<GitHubRelease | null> {
+export async function getLatestRelease(options: GitHubReleaseQueryOptions = {}): Promise<GitHubRelease | null> {
   try {
     const release = await fetchFromGitHub<GitHubRelease>('/releases/latest', options.repo)
     console.log(`[GitHub Release] 获取最新 Release: v${release.tag_name} (${repoKey(options.repo)})`)
@@ -180,7 +182,7 @@ export async function listReleases(
  * @param options - 可选：目标仓库
  * @returns 指定的 Release，如果没有则返回 null
  */
-export async function getReleaseByTag(tag: string, options: { repo?: GitHubRepoRef } = {}): Promise<GitHubRelease | null> {
+export async function getReleaseByTag(tag: string, options: GitHubReleaseQueryOptions = {}): Promise<GitHubRelease | null> {
   const key = `${repoKey(options.repo)}#${tag}`
   try {
     // 检查缓存
@@ -211,5 +213,6 @@ export async function getReleaseByTag(tag: string, options: { repo?: GitHubRepoR
  */
 export function clearReleaseCache(): void {
   releaseCacheMap.clear()
+  tagCache.clear()
   console.log('[GitHub Release] 缓存已清除')
 }

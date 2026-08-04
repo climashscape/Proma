@@ -54,6 +54,12 @@ export interface GitHubReleaseListOptions {
   repo?: GitHubRepoRef
 }
 
+/** GitHub Release 单条查询选项（最新 / 按 tag） */
+export interface GitHubReleaseQueryOptions {
+  /** 目标仓库；缺省时使用当前构建配置的仓库 */
+  repo?: GitHubRepoRef
+}
+
 /** GitHub Release IPC 通道常量 */
 export const GITHUB_RELEASE_IPC_CHANNELS = {
   /** 获取最新 Release */
