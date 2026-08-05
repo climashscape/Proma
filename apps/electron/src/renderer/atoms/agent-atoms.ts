@@ -33,6 +33,8 @@ export interface ToolActivity {
   isBackground?: boolean
   /** MCP 工具返回的图片附件 */
   imageAttachments?: Array<{ localPath: string; filename: string; mediaType: string }>
+  /** Bash 等工具执行期间的流式输出（实时终端化渲染用） */
+  streamingOutput?: string
 }
 
 /** 活动分组（Task 子代理） */
@@ -303,6 +305,31 @@ export const agentStreamingStatesAtom = atom<Map<string, AgentStreamState>>(new 
  */
 export const agentSessionStreamingStateAtomFamily = atomFamily((sessionId: string) =>
   atom((get) => get(agentStreamingStatesAtom).get(sessionId)),
+)
+
+/**
+ * 单个 toolUseId 的流式输出派生 atom — 按 toolUseId 切片订阅。
+ *
+ * ContentBlock 遍历所有 session 的 toolActivities 查找 streamingOutput，
+ * 若直接订阅 agentStreamingStatesAtom，任意 session 的 Bash 流式 tick（10Hz）
+ * 都会让消息树所有 ContentBlock 重渲染。本 family 让订阅者只在目标 toolUseId
+ * 的 streamingOutput 引用变化时重渲染——其他工具/会话的更新虽然让 base atom
+ * 变化，但派生 atom 输出引用未变，jotai 自动跳过通知。
+ *
+ * toolUseId 由 SDK 生成全局唯一，跨 session 遍历定位是安全的。
+ */
+export const agentToolStreamingOutputAtomFamily = atomFamily((toolUseId: string) =>
+  atom<string | undefined>((get) => {
+    const states = get(agentStreamingStatesAtom)
+    for (const state of states.values()) {
+      for (const activity of state.toolActivities) {
+        if (activity.toolUseId === toolUseId && activity.streamingOutput) {
+          return activity.streamingOutput
+        }
+      }
+    }
+    return undefined
+  }),
 )
 
 /**
@@ -758,6 +785,26 @@ export function applyAgentEvent(
             : t
         ),
       }
+    }
+
+    case 'tool_output': {
+      // Bash 等工具的实时输出 chunk：
+      // - replace=true：快照被截断重置，直接整体替换缓冲
+      // - 否则：增量追加到 streamingOutput
+      // 无匹配 activity 或输出无变化时返回原引用，避免高频事件导致整个状态树重渲染。
+      const resumed = clearFinishedCompactionForResumedWork(prev)
+      let changed = false
+      const toolActivities = resumed.toolActivities.map((t) => {
+        if (t.toolUseId !== event.toolUseId) return t
+        const nextOutput = event.replace
+          ? event.output
+          : `${t.streamingOutput ?? ''}${event.output}`
+        if (nextOutput === t.streamingOutput) return t
+        changed = true
+        return { ...t, streamingOutput: nextOutput }
+      })
+      if (!changed) return prev
+      return { ...resumed, toolActivities }
     }
 
     case 'task_backgrounded': {

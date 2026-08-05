@@ -93,6 +93,40 @@ const PI_NATIVE_MAX_TOTAL_DELAY_MS = 5 * 60_000
 const PI_NATIVE_RETRY_JITTER_RATIO = 0.2
 const MAX_AUTOMATIC_COMPACTION_CONTINUATIONS = 20
 
+/**
+ * Bash 流式输出缓冲：toolCallId → 已透传的累计文本。
+ * 用于计算增量（只推送新增部分），并在 tool_execution_end 时清理。
+ *
+ * 生命周期：Pi SDK 契约保证 tool_execution_end 在正常/错误/abort/超时/截断
+ * 所有路径都发射（bash 工具 throw → error result → emitToolExecutionEnd），
+ * 因此清理可靠。仅进程被杀等极端场景会残留少量条目（key 全局唯一、不重用，
+ * 单条几 KB，可接受）。
+ */
+const bashOutputBuffer = new Map<string, string>()
+
+/**
+ * 从 Pi 的 partialResult（AgentToolUpdateCallback 参数）中提取文本内容。
+ *
+ * partialResult 形如 { content: [{ type: 'text', text: '...' }], details }，
+ * 与工具最终 result 的 content 结构一致。只提取 text 块并拼接。
+ * 导出供单元测试使用。
+ */
+export function extractPartialResultText(
+  partialResult: unknown,
+): string | undefined {
+  if (!partialResult || typeof partialResult !== 'object') return undefined
+  const content = (partialResult as { content?: unknown }).content
+  if (!Array.isArray(content)) return undefined
+  const parts: string[] = []
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue
+    const b = block as { type?: unknown; text?: unknown }
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text)
+  }
+  const text = parts.join('')
+  return text.length > 0 ? text : undefined
+}
+
 /** Pi SDK 查询选项（扩展通用 AgentQueryInput） */
 export interface PiAgentQueryOptions extends AgentQueryInput {
   apiKey: string
@@ -1728,6 +1762,46 @@ export class PiAgentAdapter implements AgentProviderAdapter {
                 tool_name: displayToolName(event.toolName, event.args as Record<string, unknown> | undefined),
                 parent_tool_use_id: null,
               } as unknown as SDKMessage)
+              // Bash 工具的流式输出：Pi 的 onUpdate 推送累计输出快照，
+              // 提取文本内容并计算增量后透传给渲染进程，驱动实时终端化渲染。
+              // 仅处理 Bash：当前只有 Bash 工具调用 onUpdate，白名单避免未来
+              // 其他工具意外接入时产生无谓的 buffer + IPC 开销。
+              if (event.toolName === 'Bash' || event.toolName === 'bash') {
+                const partialOutput = extractPartialResultText(event.partialResult)
+                if (partialOutput) {
+                  const prev = bashOutputBuffer.get(event.toolCallId)
+                  if (prev === undefined || !partialOutput.startsWith(prev)) {
+                    // 首帧或快照被截断重置（SDK 只保留 tail）：整帧替换，避免渲染层拼出脏内容
+                    queue.push({
+                      type: 'tool_output',
+                      session_id: session.sessionId,
+                      tool_use_id: event.toolCallId,
+                      tool_name: displayToolName(event.toolName, event.args as Record<string, unknown> | undefined),
+                      parent_tool_use_id: null,
+                      output: partialOutput,
+                      replace: true,
+                    } as unknown as SDKMessage)
+                    bashOutputBuffer.set(event.toolCallId, partialOutput)
+                  } else if (partialOutput.length > prev.length) {
+                    // 常规增量：仅推送新增文本，减少 IPC 与渲染压力
+                    queue.push({
+                      type: 'tool_output',
+                      session_id: session.sessionId,
+                      tool_use_id: event.toolCallId,
+                      tool_name: displayToolName(event.toolName, event.args as Record<string, unknown> | undefined),
+                      parent_tool_use_id: null,
+                      output: partialOutput.slice(prev.length),
+                    } as unknown as SDKMessage)
+                    bashOutputBuffer.set(event.toolCallId, partialOutput)
+                  }
+                }
+              }
+              break
+            case 'tool_execution_end':
+              // 工具执行结束，清理流式输出缓冲，避免长会话内存泄漏
+              if (bashOutputBuffer.has(event.toolCallId)) {
+                bashOutputBuffer.delete(event.toolCallId)
+              }
               break
             case 'compaction_start':
               // 压缩开始（手动 /compact 或自动阈值/溢出触发）：发前端已识别的 compacting system 消息，

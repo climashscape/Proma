@@ -8,6 +8,7 @@
  */
 
 import * as React from 'react'
+import { useAtomValue } from 'jotai'
 import {
   ChevronRight,
   ChevronDown,
@@ -26,6 +27,7 @@ import { PreviewOpenButton } from './tool-result-renderers/preview-open-button'
 import { getTaskGetStatusLabel, parseTaskGetResult, type ParsedTaskGetResult } from './tool-result-renderers/task-get-result'
 import { parseTaskListResult, type ParsedTaskListItem } from './tool-result-renderers/task-list-result'
 import { formatDuration } from './AgentMessages'
+import { agentToolStreamingOutputAtomFamily } from '@/atoms/agent-atoms'
 import type {
   SDKContentBlock,
   SDKMessage,
@@ -73,6 +75,18 @@ function useToolResult(toolUseId: string, allMessages: SDKMessage[]): ToolResult
     }
     return null
   }, [toolUseId, allMessages])
+}
+
+// ===== useToolStreamingOutput Hook =====
+
+/**
+ * 按全局唯一 toolUseId 查找工具执行期间的流式输出。
+ *
+ * 通过 atomFamily 按 toolUseId 切片订阅：只有目标工具的输出变化时
+ * 本组件才重渲染，避免任意 session 的 Bash tick（10Hz）污染消息树。
+ */
+function useToolStreamingOutput(toolUseId: string): string | undefined {
+  return useAtomValue(agentToolStreamingOutputAtomFamily(toolUseId))
 }
 
 // ===== useSubAgentMeta Hook =====
@@ -338,6 +352,11 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
   const resultText = toolResult?.result
   const isError = toolResult?.isError === true
   const shouldShowResult = !!resultText
+  // Bash 等工具的实时流式输出：从流式状态中按全局唯一 toolUseId 查找 activity
+  const streamingOutput = useToolStreamingOutput(block.id)
+  // 渲染条件派生布尔值（避免 JSX 中复杂组合表达式）
+  const hasResult = shouldShowResult && !!resultText
+  const hasStreamFallback = !!streamingOutput
   const taskGetSummary = React.useMemo(() => {
     if (block.name !== 'TaskGet' || !resultText || isError) return null
     return parseTaskGetResult(resultText)
@@ -357,6 +376,25 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
   const ToolIcon = getToolIcon(block.name)
 
   const isCompleted = toolResult !== null
+
+  // Bash 工具在流式期间命令启动即显示终端（即使当前尚无输出）；
+  // tool_result 一到（isCompleted）立即切结束模式，避免显示假的“执行中”脉冲。
+  const isStreamingOutput = isStreaming && block.name === 'Bash' && !isCompleted
+  const showStreaming = isStreamingOutput
+
+  // 记录是否经历过流式输出：结束后结果保持展开，避免展开/收起跳动。
+  // 用户手动收起时清除标记，恢复常规折叠行为。
+  const [keepResultExpanded, setKeepResultExpanded] = React.useState(false)
+  React.useEffect(() => {
+    if (isStreamingOutput) setKeepResultExpanded(true)
+  }, [isStreamingOutput])
+  const toggleResult = React.useCallback(() => {
+    setExpanded((prev) => {
+      const next = !prev
+      if (!next) setKeepResultExpanded(false)
+      return next
+    })
+  }, [])
 
   // 运行中显示进行时短语，完成或非流式（已终止）显示完成态短语
   const displayLabel = (isCompleted || !isStreaming) ? phrase.label : phrase.loadingLabel
@@ -481,7 +519,7 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
           'inline-flex max-w-full items-center gap-2 py-0.5 text-left transition-opacity group',
           'hover:opacity-70',
         )}
-        onClick={() => setExpanded(!expanded)}
+        onClick={toggleResult}
       >
         {!isCompleted && isStreaming ? (
           <Loader2 className="size-3.5 animate-spin text-primary/50 shrink-0" />
@@ -533,7 +571,12 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
         )}
       </button>
 
-      {shouldShowResult && resultText && expanded && (
+      {/* 渲染条件：
+       * - hasResult：正常结束态有完整结果
+       * - showStreaming：Bash 流式执行中（命令启动即显示）
+       * - hasStreamFallback：流式输出缓冲仍存在（如结束但 result 为空兜底）
+       * 展开条件：用户展开 / 流式中强制显示 / 曾流式且仍有内容（避免结束后内容消失） */}
+      {(hasResult || showStreaming || hasStreamFallback) && (expanded || showStreaming || (keepResultExpanded && (hasResult || hasStreamFallback))) && (
         <div className={cn(
           'ml-5.5 mt-1 mb-2 pl-3 border-l-2 border-border/30',
           animate && 'animate-in fade-in slide-in-from-top-1 duration-150',
@@ -541,9 +584,11 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
           <ToolResultRenderer
             toolName={block.name}
             input={block.input}
-            result={resultText}
+            result={resultText ?? ''}
             isError={isError}
             basePath={basePath}
+            streamingOutput={streamingOutput}
+            isStreamingOutput={isStreamingOutput}
           />
         </div>
       )}

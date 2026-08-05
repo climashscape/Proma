@@ -346,6 +346,25 @@ export interface SDKToolProgressMessage {
   session_id?: string
 }
 
+/**
+ * SDK 工具执行期间的部分输出消息（Bash 流式 stdout/stderr chunk）
+ *
+ * Pi SDK 在 Bash 工具执行期间通过 onUpdate 每 100ms 推送累计输出快照，
+ * 主进程将其转换为 tool_output 消息透传给渲染进程，驱动前端实时终端化渲染。
+ */
+export interface SDKToolOutputMessage {
+  type: 'tool_output'
+  /** 匹配 tool_use 块的 id */
+  tool_use_id: string
+  tool_name: string
+  parent_tool_use_id: string | null
+  /** 输出增量文本；当 replace=true 时为完整快照，前端应重置缓冲 */
+  output: string
+  /** 完整快照标记（输出被截断/重置场景），默认 false 表示增量追加 */
+  replace?: boolean
+  session_id?: string
+}
+
 /** SDK prompt_suggestion 消息 */
 export interface SDKPromptSuggestionMessage {
   type: 'prompt_suggestion'
@@ -369,6 +388,7 @@ export type SDKMessage =
   | SDKThinkingTokensMessage
   | SDKSystemMessage
   | SDKToolProgressMessage
+  | SDKToolOutputMessage
   | SDKPromptSuggestionMessage
   | SDKToolUseSummaryMessage
   | { type: string; session_id?: string; parent_tool_use_id?: string | null; [key: string]: unknown }
@@ -536,6 +556,7 @@ export type AgentEvent =
   // 工具执行
   | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown>; intent?: string; displayName?: string; turnId?: string; parentToolUseId?: string }
   | { type: 'tool_result'; toolUseId: string; toolName?: string; result: string; isError: boolean; input?: Record<string, unknown>; turnId?: string; parentToolUseId?: string; imageAttachments?: AgentToolResultImage[] }
+  | { type: 'tool_output'; toolUseId: string; toolName?: string; output: string; replace?: boolean; turnId?: string }
   // 后台任务
   | { type: 'task_backgrounded'; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string; turnId?: string }

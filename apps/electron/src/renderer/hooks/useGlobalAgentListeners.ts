@@ -437,6 +437,18 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
       }]
     }
 
+    case 'tool_output': {
+      const toMsg = msg as { tool_use_id: string; tool_name?: string; output: string; replace?: boolean }
+      return [{
+        type: 'tool_output',
+        toolUseId: toMsg.tool_use_id,
+        toolName: toMsg.tool_name,
+        // 运行时防御：异常发送方缺 output 时避免把 undefined 拼进缓冲
+        output: typeof toMsg.output === 'string' ? toMsg.output : '',
+        replace: toMsg.replace === true,
+      }]
+    }
+
     case 'prompt_suggestion': {
       const psMsg = msg as { suggestion?: string }
       if (psMsg.suggestion) return [{ type: 'prompt_suggestion', suggestion: psMsg.suggestion }]
@@ -741,6 +753,10 @@ export function useGlobalAgentListeners(): void {
             // 跳过写入 liveMessages
           } else if (msgRecord.type === 'system' && msgRecord.subtype === 'thinking_tokens') {
             // thinking_tokens 是高频进度估算，只更新流式状态，不进入消息转录。
+          } else if (msgRecord.type === 'tool_output') {
+            // tool_output 是工具执行期间的流式输出 chunk，
+            // 高频且量大，只通过 legacyEvents 更新 ToolActivity.streamingOutput，
+            // 不进入 liveMessages 转录，避免污染消息列表。
           } else if (!msgRecord.isReplay) {
             // 为实时消息补充 _createdAt 时间戳（与持久化时的逻辑一致），
             // 避免 AssistantTurnRenderer 因缺少时间戳导致 header 时间消失
@@ -842,6 +858,9 @@ export function useGlobalAgentListeners(): void {
                 startedAt: undefined,
               }
               const next = applyAgentEvent(current, event)
+              // 引用守卫：applyAgentEvent 对无实际变化的事件（如不匹配 toolUseId 的
+              // tool_output）返回原引用，此时不新建 Map，避免 jotai 通知整个订阅树。
+              if (next === current) return prev
               const map = new Map(prev)
               map.set(sessionId, next)
               return map

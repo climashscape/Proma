@@ -24,12 +24,16 @@ export interface ToolResultRendererProps {
   result: string
   isError: boolean
   basePath?: string
+  /** Bash 等工具的实时流式输出（执行中） */
+  streamingOutput?: string
+  /** 是否处于流式输出中 */
+  isStreamingOutput?: boolean
 }
 
-export function ToolResultRenderer({ toolName, input, result, isError, basePath }: ToolResultRendererProps): React.ReactElement {
+export function ToolResultRenderer({ toolName, input, result, isError, basePath, streamingOutput, isStreamingOutput }: ToolResultRendererProps): React.ReactElement {
   switch (toolName) {
     case 'Bash':
-      return <BashResultRenderer result={result} isError={isError} input={input} />
+      return <BashResultRenderer result={result} isError={isError} input={input} streamingOutput={streamingOutput} isStreamingOutput={isStreamingOutput} />
     case 'Read':
       return <ReadResultRenderer result={result} isError={isError} input={input} />
     case 'Edit':

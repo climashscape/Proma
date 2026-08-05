@@ -287,3 +287,71 @@ describe('Agent 流式错误状态', () => {
     expect(clearAgentStreamError(errors, 'retried-session')).toBe(errors)
   })
 })
+
+describe('Agent Bash 流式输出状态', () => {
+  function stateWithBashActivity(streamingOutput?: string): AgentStreamState {
+    return createStreamState({
+      toolActivities: [{
+        toolUseId: 'tool-bash-1',
+        toolName: 'Bash',
+        input: { command: 'npm run build' },
+        done: false,
+        streamingOutput,
+      }],
+    })
+  }
+
+  test('given Bash 增量 chunk when 收到 tool_output then 追加到 streamingOutput', () => {
+    const result = applyAgentEvent(stateWithBashActivity('line1\n'), {
+      type: 'tool_output',
+      toolUseId: 'tool-bash-1',
+      output: 'line2\n',
+    })
+
+    expect(result.toolActivities[0]?.streamingOutput).toBe('line1\nline2\n')
+    expect(result.toolActivities[0]?.done).toBe(false)
+  })
+
+  test('given 无已有输出 when 收到首个 tool_output then 初始化为 chunk 内容', () => {
+    const result = applyAgentEvent(stateWithBashActivity(), {
+      type: 'tool_output',
+      toolUseId: 'tool-bash-1',
+      output: 'build start\n',
+    })
+
+    expect(result.toolActivities[0]?.streamingOutput).toBe('build start\n')
+  })
+
+  test('given 快照被截断重置 when 收到 replace=true then 整体替换而非追加', () => {
+    const result = applyAgentEvent(stateWithBashActivity('old-tail-content'), {
+      type: 'tool_output',
+      toolUseId: 'tool-bash-1',
+      output: 'new-tail-content',
+      replace: true,
+    })
+
+    expect(result.toolActivities[0]?.streamingOutput).toBe('new-tail-content')
+  })
+
+  test('given 空增量 when 收到 tool_output then 保持原引用避免重渲染', () => {
+    const state = stateWithBashActivity('same')
+    const result = applyAgentEvent(state, {
+      type: 'tool_output',
+      toolUseId: 'tool-bash-1',
+      output: '',
+    })
+
+    expect(result).toBe(state)
+  })
+
+  test('given 不匹配的 toolUseId when 收到 tool_output then 不修改任何 activity', () => {
+    const state = stateWithBashActivity('keep')
+    const result = applyAgentEvent(state, {
+      type: 'tool_output',
+      toolUseId: 'tool-other',
+      output: 'ignored',
+    })
+
+    expect(result).toBe(state)
+  })
+})
