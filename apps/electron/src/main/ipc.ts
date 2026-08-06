@@ -162,6 +162,7 @@ import {
   updateChannel,
   deleteChannel,
   decryptApiKey,
+  decryptChannelSecret,
   testChannel,
   testChannelDirect,
   fetchModels,
@@ -1253,6 +1254,14 @@ export function registerIpcHandlers(): void {
     CHANNEL_IPC_CHANNELS.DECRYPT_KEY,
     async (_, channelId: string): Promise<string> => {
       return decryptApiKey(channelId)
+    }
+  )
+
+  // 解密渠道可选敏感字段（表单回显 OpenCode Go workspaceId / authCookie 用）
+  ipcMain.handle(
+    CHANNEL_IPC_CHANNELS.DECRYPT_SECRET,
+    async (_, channelId: string, field: 'workspaceId' | 'authCookie'): Promise<string> => {
+      return decryptChannelSecret(channelId, field)
     }
   )
 

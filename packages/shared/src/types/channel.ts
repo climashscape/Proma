@@ -310,6 +310,20 @@ export interface Channel {
   baseUrl: string
   /** 加密后的 API Key（base64 编码） */
   apiKey: string
+  /**
+   * OpenCode Go 订阅额度查询用 workspace ID（safeStorage 加密存储）。
+   *
+   * opencode.ai 控制台 URL 中形如 wrk_xxx；官方暂无额度查询 API，
+   * 只能抓取登录后的控制台页面，需配合 authCookie 使用。
+   */
+  workspaceId?: string
+  /**
+   * OpenCode Go 订阅额度查询用 auth cookie（safeStorage 加密存储）。
+   *
+   * 浏览器登录 opencode.ai 后从 DevTools → Application → Cookies 复制的完整 Cookie 字符串；
+   * 会话过期后需在渠道配置中更新。
+   */
+  authCookie?: string
   /** 可用模型列表 */
   models: ChannelModel[]
   /** 是否启用 */
@@ -329,6 +343,10 @@ export interface ChannelCreateInput {
   baseUrl: string
   /** 明文 API Key，主进程会加密后存储 */
   apiKey: string
+  /** 明文 OpenCode Go workspace ID，主进程会加密后存储（可选） */
+  workspaceId?: string
+  /** 明文 OpenCode Go auth cookie，主进程会加密后存储（可选） */
+  authCookie?: string
   models: ChannelModel[]
   enabled: boolean
 }
@@ -342,6 +360,10 @@ export interface ChannelUpdateInput {
   baseUrl?: string
   /** 明文 API Key，为空字符串表示不更新 */
   apiKey?: string
+  /** 明文 OpenCode Go workspace ID，undefined 保留原值，空字符串清空 */
+  workspaceId?: string
+  /** 明文 OpenCode Go auth cookie，undefined 保留原值，空字符串清空 */
+  authCookie?: string
   models?: ChannelModel[]
   enabled?: boolean
 }
@@ -478,6 +500,8 @@ export const CHANNEL_IPC_CHANNELS = {
   DELETE: 'channel:delete',
   /** 解密获取明文 API Key */
   DECRYPT_KEY: 'channel:decrypt-key',
+  /** 解密渠道可选敏感字段（如 OpenCode Go workspaceId / authCookie） */
+  DECRYPT_SECRET: 'channel:decrypt-secret',
   /** 测试渠道连接 */
   TEST: 'channel:test',
   /** 从供应商拉取可用模型列表 */

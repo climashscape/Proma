@@ -349,6 +349,8 @@ export function createChannel(input: ChannelCreateInput): Channel {
     provider: input.provider,
     baseUrl: input.baseUrl,
     apiKey: encryptApiKey(input.apiKey),
+    workspaceId: input.workspaceId ? encryptApiKey(input.workspaceId) : undefined,
+    authCookie: input.authCookie ? encryptApiKey(input.authCookie) : undefined,
     models: input.models,
     enabled: input.enabled,
     createdAt: now,
@@ -385,6 +387,17 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
     provider: input.provider ?? existing.provider,
     baseUrl: input.baseUrl ?? existing.baseUrl,
     apiKey: input.apiKey ? encryptApiKey(input.apiKey) : existing.apiKey,
+    // 可选字段：undefined 保留原值，空字符串显式清空（authCookie 会过期，需能清除）
+    workspaceId: input.workspaceId === undefined
+      ? existing.workspaceId
+      : input.workspaceId
+        ? encryptApiKey(input.workspaceId)
+        : undefined,
+    authCookie: input.authCookie === undefined
+      ? existing.authCookie
+      : input.authCookie
+        ? encryptApiKey(input.authCookie)
+        : undefined,
     models: input.models ?? existing.models,
     enabled: input.enabled ?? existing.enabled,
     updatedAt: Date.now(),
@@ -428,6 +441,28 @@ export function decryptApiKey(channelId: string): string {
   }
 
   return decryptKey(channel.apiKey)
+}
+
+/**
+ * 解密渠道的可选敏感字段（如 OpenCode Go 额度查询的 workspaceId / authCookie）。
+ *
+ * 未配置时返回空字符串，供表单回显；仅对 safeStorage 加密过的值解密。
+ */
+export function decryptChannelSecret(channelId: string, field: 'workspaceId' | 'authCookie'): string {
+  // IPC 运行时不受 TS 类型约束，必须做白名单校验，避免任意索引解密
+  if (field !== 'workspaceId' && field !== 'authCookie') {
+    throw new Error(`不支持的解密字段: ${field}`)
+  }
+  const config = readConfig()
+  const channel = config.channels.find((c) => c.id === channelId)
+
+  if (!channel) {
+    throw new Error(`渠道不存在: ${channelId}`)
+  }
+
+  const encrypted = channel[field]
+  if (!encrypted) return ''
+  return decryptKey(encrypted)
 }
 
 /**
@@ -911,6 +946,97 @@ function createUnsupportedPlanQuota(provider: ProviderType, message: string): Ch
     windows: [],
     updatedAt: Date.now(),
     message,
+  }
+}
+
+const OPENCODE_GO_QUOTA_TIMEOUT_MS = 10_000
+
+/**
+ * 解析 OpenCode Go 控制台 /go 页面中的三窗口用量。
+ *
+ * 官方未提供额度查询 API（anomalyco/opencode#10448 / #16017），页面为 SolidStart SSR，
+ * 用量数据以 RPC 注入形式内嵌在 HTML 中（rollingUsage / weeklyUsage / monthlyUsage，
+ * camelCase 字段名不受界面 locale 影响），直接提取 status / resetInSec / usagePercent。
+ * 2026-08-06 真实页面验证：三窗口均可解析（滚动 24% / 每周 9% / 每月 4%）。
+ */
+function parseOpenCodeGoQuotaWindows(html: string): ChannelPlanQuotaWindow[] {
+  const windows: ChannelPlanQuotaWindow[] = []
+  const specs: Array<{ key: string; type: ChannelPlanQuotaWindow['type']; label: string }> = [
+    { key: 'rollingUsage', type: '5h', label: '每 5 小时' },
+    { key: 'weeklyUsage', type: 'weekly', label: '每周额度' },
+    { key: 'monthlyUsage', type: 'custom', label: '每月额度' },
+  ]
+  for (const { key, type, label } of specs) {
+    const match = html.match(new RegExp(`${key}:\\$R\\[\\d+\\]=\\{([^}]*)\\}`))
+    if (!match) continue
+    // 正则含捕获组，match[1] 必然存在
+    const body = match[1]!
+    const status = body.match(/status:"([^"]+)"/)?.[1]
+    const resetInSec = Number(body.match(/resetInSec:(\d+)/)?.[1])
+    const usagePercent = Number(body.match(/usagePercent:(\d+)/)?.[1])
+    // status 非 ok 或缺少百分比时跳过该窗口，避免展示无效数据
+    if (status !== 'ok' || !Number.isFinite(usagePercent)) continue
+    const used = clampPercent(usagePercent)
+    windows.push({
+      type,
+      label,
+      usedPercent: used,
+      remainingPercent: clampPercent(100 - used),
+      ...(Number.isFinite(resetInSec) && resetInSec > 0 ? { resetAt: Date.now() + resetInSec * 1000 } : {}),
+    })
+  }
+  return windows
+}
+
+/**
+ * 查询 OpenCode Go 订阅额度（控制台页面抓取）。
+ *
+ * OpenCode Go 是 Anomaly 的 $10/月订阅，额度按美元价值分三个滚动窗口
+ * （每 5 小时 $12 / 每周 $30 / 每月 $60）。官方未开放额度查询 API，
+ * 此处抓取登录后的控制台页面，需要浏览器会话的 auth cookie。
+ *
+ * 注意：auth cookie 会随会话过期，过期后需在渠道配置中重新填写。
+ */
+async function queryOpenCodeGoPlanQuota(
+  workspaceId: string,
+  authCookie: string,
+  proxyUrl?: string,
+): Promise<ChannelPlanQuotaResult> {
+  const fetchFn = getFetchFn(proxyUrl)
+  const response = await fetchFn(
+    `https://opencode.ai/workspace/${encodeURIComponent(workspaceId)}/go`,
+    withTimeout({
+      method: 'GET',
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent': getPromaUserAgent(pkg.version),
+        // 透传用户从浏览器复制的完整 Cookie 字符串（auth=...;oc_locale=... 等）
+        Cookie: authCookie,
+      },
+    }, OPENCODE_GO_QUOTA_TIMEOUT_MS),
+  )
+  const responseText = await response.text()
+  if (!response.ok) {
+    return createUnsupportedPlanQuota(
+      'opencode-go-openai',
+      `OpenCode Go 额度查询失败: HTTP ${response.status}（auth cookie 可能已过期，请重新填写）`,
+    )
+  }
+
+  const windows = parseOpenCodeGoQuotaWindows(responseText)
+  if (windows.length === 0) {
+    return createUnsupportedPlanQuota(
+      'opencode-go-openai',
+      'OpenCode Go 额度页面解析失败，请检查 workspaceId 与 auth cookie 是否有效',
+    )
+  }
+
+  return {
+    supported: true,
+    provider: 'opencode-go-openai',
+    planName: 'OpenCode Go',
+    windows,
+    updatedAt: Date.now(),
   }
 }
 
@@ -1526,6 +1652,19 @@ export async function getChannelPlanQuota(channelId: string): Promise<ChannelPla
     }
     if (provider === 'zhipu' || provider === 'zhipu-coding' || provider === 'zhipu-coding-team') {
       return await queryZhipuPlanQuota(apiKey, channel.baseUrl, proxyUrl, provider)
+    }
+    if (provider === 'opencode-go-openai') {
+      if (!channel.workspaceId || !channel.authCookie) {
+        return createUnsupportedPlanQuota(
+          'opencode-go-openai',
+          '未配置额度查询信息，请在渠道配置中填写 workspaceId 与 auth cookie',
+        )
+      }
+      return await queryOpenCodeGoPlanQuota(
+        decryptKey(channel.workspaceId),
+        decryptKey(channel.authCookie),
+        proxyUrl,
+      )
     }
     return createUnsupportedPlanQuota(provider, '当前渠道不支持订阅 Plan 额度查询')
   } catch (error) {

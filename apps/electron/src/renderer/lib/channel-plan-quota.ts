@@ -4,6 +4,7 @@ const PLAN_QUOTA_PROVIDERS = new Set<ProviderType>([
   'deepseek',
   'kimi-coding',
   'minimax',
+  'opencode-go-openai',
   'zhipu',
   'zhipu-coding',
   'zhipu-coding-team',

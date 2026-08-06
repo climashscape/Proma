@@ -216,6 +216,12 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   ))
   const [apiKey, setApiKey] = React.useState('')
   const [zhipuTeamSecret, setZhipuTeamSecret] = React.useState<ZhipuTeamSecretForm>(EMPTY_ZHIPU_TEAM_SECRET)
+  // OpenCode Go 额度显示用（独立字段，与 apiKey 分开加密存储）
+  const [openCodeGoWorkspaceId, setOpenCodeGoWorkspaceId] = React.useState('')
+  const [openCodeGoAuthCookie, setOpenCodeGoAuthCookie] = React.useState('')
+  const [showAuthCookie, setShowAuthCookie] = React.useState(false)
+  // OpenCode Go 额度字段解密回显完成前不触发 autosave，避免用空值误清已存配置
+  const [quotaCredentialsLoaded, setQuotaCredentialsLoaded] = React.useState(false)
   const [showApiKey, setShowApiKey] = React.useState(false)
   const [models, setModels] = React.useState<ChannelModel[]>(channel?.models ?? [])
   const [enabled, setEnabled] = React.useState(channel?.enabled ?? true)
@@ -281,6 +287,17 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
         if (channel.provider === 'zhipu-coding-team') {
           setZhipuTeamSecret({ ...EMPTY_ZHIPU_TEAM_SECRET, ...parseZhipuTeamSecret(key) })
         }
+        if (channel.provider === 'opencode-go-openai') {
+          void window.electronAPI.decryptChannelSecret(channel.id, 'workspaceId')
+            .then(setOpenCodeGoWorkspaceId)
+            .catch(() => setOpenCodeGoWorkspaceId(''))
+            .finally(() => {
+              void window.electronAPI.decryptChannelSecret(channel.id, 'authCookie')
+                .then(setOpenCodeGoAuthCookie)
+                .catch(() => setOpenCodeGoAuthCookie(''))
+                .finally(() => setQuotaCredentialsLoaded(true))
+            })
+        }
         setApiKeyLoaded(true)
       }).catch((error) => {
         console.error('[模型配置表单] 解密 API Key 失败:', error)
@@ -290,6 +307,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   }, [isEdit, channel, apiKeyLoaded])
 
   const isZhipuTeamProvider = provider === 'zhipu-coding-team'
+  const isOpenCodeGoProvider = provider === 'opencode-go-openai'
   const isCodexProvider = provider === 'openai-codex'
   const isXaiProvider = provider === 'xai'
   const isSubscriptionProvider = isCodexProvider || isXaiProvider
@@ -328,6 +346,8 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     currentBaseUrl: string,
     currentApiKey: string,
     currentEnabled: boolean,
+    currentWorkspaceId?: string,
+    currentAuthCookie?: string,
   ) => {
     if (!isEdit || !channel) return
     try {
@@ -336,6 +356,8 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
         provider: currentProvider,
         baseUrl: currentBaseUrl,
         apiKey: currentApiKey || undefined,
+        workspaceId: isOpenCodeGoProvider ? currentWorkspaceId : undefined,
+        authCookie: isOpenCodeGoProvider ? currentAuthCookie : undefined,
         models: currentModels,
         enabled: currentEnabled,
       })
@@ -349,7 +371,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       console.error('[模型配置表单] auto-save 失败:', error)
       toast.error('自动保存失败，请检查后手动重试', { id: 'auto-save-error' })
     }
-  }, [isEdit, channel, onAgentEligibilityChange])
+  }, [isEdit, channel, onAgentEligibilityChange, isOpenCodeGoProvider])
 
   /** 触发防抖 auto-save */
   const scheduleAutoSave = React.useCallback((
@@ -360,13 +382,17 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     nextApiKey: string,
     nextEnabled: boolean,
     requiresRiskAcknowledgement: boolean,
+    nextWorkspaceId?: string,
+    nextAuthCookie?: string,
   ) => {
     if (!isEdit || !initializedRef.current || requiresRiskAcknowledgement) return
+    // 额度字段未回显完成时跳过，避免空值清空已存配置（'' 有清空语义）
+    if (isOpenCodeGoProvider && !quotaCredentialsLoaded) return
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
-      doAutoSave(nextModels, nextName, nextProvider, nextBaseUrl, nextApiKey, nextEnabled)
+      doAutoSave(nextModels, nextName, nextProvider, nextBaseUrl, nextApiKey, nextEnabled, nextWorkspaceId, nextAuthCookie)
     }, AUTO_SAVE_DELAY)
-  }, [isEdit, doAutoSave])
+  }, [isEdit, doAutoSave, isOpenCodeGoProvider, quotaCredentialsLoaded])
 
   // API Key 加载完成后标记初始化
   React.useEffect(() => {
@@ -390,9 +416,11 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       effectiveApiKey,
       enabled,
       requiresBaseUrlRiskAcknowledgement,
+      openCodeGoWorkspaceId,
+      openCodeGoAuthCookie,
     )
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
-  }, [models, name, provider, baseUrl, effectiveApiKey, enabled, requiresBaseUrlRiskAcknowledgement, scheduleAutoSave])
+  }, [models, name, provider, baseUrl, effectiveApiKey, enabled, requiresBaseUrlRiskAcknowledgement, scheduleAutoSave, openCodeGoWorkspaceId, openCodeGoAuthCookie])
 
   // 切换供应商时自动更新 Base URL 与名称，Anthropic 兼容渠道自动添加预设模型
   const handleProviderChange = (newProvider: string): void => {
@@ -415,6 +443,9 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       setApiKey(zhipuTeamSecret.apiKey)
       setZhipuTeamSecret(EMPTY_ZHIPU_TEAM_SECRET)
     }
+    // 注意：不从 opencode 切走时清空 workspaceId/authCookie state。
+    // 这两个字段有「'' 清空」语义，切走时清空 state 会经 autosave 持久化删除已存凭证；
+    // 非 opencode provider 下 doAutoSave 会传 undefined 保留原值，state 残留无副作用。
     // 预设模型：首次切换到对应 provider 且无模型时自动填充
     if (models.length === 0) {
       if (p === 'deepseek') {
@@ -757,6 +788,8 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
         provider,
         baseUrl,
         apiKey: effectiveApiKey,
+        workspaceId: openCodeGoWorkspaceId,
+        authCookie: openCodeGoAuthCookie,
         models,
         enabled,
       }
@@ -773,7 +806,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     } finally {
       setSaving(false)
     }
-  }, [name, provider, baseUrl, effectiveApiKey, hasRequiredSecret, models, enabled, onAgentEligibilityChange])
+  }, [name, provider, baseUrl, effectiveApiKey, hasRequiredSecret, models, enabled, onAgentEligibilityChange, openCodeGoWorkspaceId, openCodeGoAuthCookie])
 
   /** 显示第三方 Base URL 风险确认。 */
   const requestBaseUrlRiskAcknowledgement = (action: 'auto-save' | 'create' | 'fetch' | 'save-and-close' | 'test' | null): void => {
@@ -1097,6 +1130,69 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
                     智谱组织与项目管理
                   </a>
                   {' '}查看；不填写时使用 API Token 的默认组织与项目上下文查询。
+                </div>
+              </div>
+            ) : isOpenCodeGoProvider ? (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Input
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={getApiKeyPlaceholder(provider, isEdit)}
+                    required={!isEdit}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                    tabIndex={-1}
+                    title={showApiKey ? '隐藏凭证' : '显示凭证'}
+                  >
+                    {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <Input
+                  type="text"
+                  value={openCodeGoWorkspaceId}
+                  onChange={(e) => setOpenCodeGoWorkspaceId(e.target.value)}
+                  placeholder="Workspace ID（可选，额度显示用，控制台 URL 中形如 wrk_xxx）"
+                />
+                <div className="relative">
+                  <Input
+                    type={showAuthCookie ? 'text' : 'password'}
+                    value={openCodeGoAuthCookie}
+                    onChange={(e) => setOpenCodeGoAuthCookie(e.target.value)}
+                    placeholder="Cookie（可选，额度显示用，如 auth=...;oc_locale=...）"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAuthCookie(!showAuthCookie)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                    tabIndex={-1}
+                    title={showAuthCookie ? '隐藏凭证' : '显示凭证'}
+                  >
+                    {showAuthCookie ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <div>额度显示需填写以下两项（可留空，不影响对话功能）：</div>
+                  <div>
+                    · Workspace ID：登录{' '}
+                    <a
+                      className="text-primary hover:underline"
+                      href="https://opencode.ai"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      opencode.ai
+                    </a>
+                    {' '}后从控制台 URL 复制（形如 wrk_xxx）
+                  </div>
+                  <div>· Cookie：浏览器 F12 → Application → Cookies → opencode.ai，复制完整 Cookie 字符串（auth=...;oc_locale=...）</div>
+                  <div>Cookie 会随会话过期，过期后需更新；清空输入框可移除。</div>
                 </div>
               </div>
             ) : (

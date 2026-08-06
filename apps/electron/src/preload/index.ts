@@ -256,6 +256,9 @@ export interface ElectronAPI {
   /** 解密获取明文 API Key（仅在用户查看时调用） */
   decryptApiKey: (channelId: string) => Promise<string>
 
+  /** 解密渠道可选敏感字段（OpenCode Go workspaceId / authCookie，表单回显用） */
+  decryptChannelSecret: (channelId: string, field: 'workspaceId' | 'authCookie') => Promise<string>
+
   /** 测试渠道连接 */
   testChannel: (channelId: string) => Promise<ChannelTestResult>
 
@@ -1342,6 +1345,10 @@ const electronAPI: ElectronAPI = {
 
   decryptApiKey: (channelId: string) => {
     return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.DECRYPT_KEY, channelId)
+  },
+
+  decryptChannelSecret: (channelId: string, field: 'workspaceId' | 'authCookie') => {
+    return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.DECRYPT_SECRET, channelId, field)
   },
 
   testChannel: (channelId: string) => {
