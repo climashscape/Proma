@@ -1002,9 +1002,12 @@ async function queryOpenCodeGoPlanQuota(
   authCookie: string,
   proxyUrl?: string,
 ): Promise<ChannelPlanQuotaResult> {
+  // 兼容两种填法：裸 ID（wrk_xxx）或浏览器地址栏复制的完整 URL（https://opencode.ai/workspace/<id>/go）
+  const idMatch = workspaceId.trim().match(/\/workspace\/([^/]+)(?:\/|$)/)
+  const normalizedWorkspaceId = idMatch?.[1] ?? workspaceId.trim()
   const fetchFn = getFetchFn(proxyUrl)
   const response = await fetchFn(
-    `https://opencode.ai/workspace/${encodeURIComponent(workspaceId)}/go`,
+    `https://opencode.ai/workspace/${encodeURIComponent(normalizedWorkspaceId)}/go`,
     withTimeout({
       method: 'GET',
       headers: {
