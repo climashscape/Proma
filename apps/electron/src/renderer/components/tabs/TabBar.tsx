@@ -28,6 +28,7 @@ import {
   unviewedCompletedSessionIdsAtom,
 } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
+import { activeViewAtom } from '@/atoms/active-view'
 import { automationFormAtom } from '@/atoms/automation-atoms'
 import { tearOffPreviewToSplit } from '@/components/diff/preview-opener'
 import { tearOffScratchToSplit } from '@/components/scratch-pad/scratch-pad-opener'
@@ -232,6 +233,20 @@ function TabBarInner({
   // 该按钮的 absolute 定位与 DiffPanelTabBar.PanelRightClose 的 mr-1 mb-[3px] 坐标耦合，
   // 若右侧关闭按钮样式变化，这里需同步调整。
   const [isPanelOpen, setSidePanelOpen] = useAtom(agentSidePanelOpenAtom)
+
+  // 右侧 Agent 文件面板是否实际渲染并展开（= 是否让 TabBar 右缘缩进到面板左缘）。
+  // 与 AppShell 的 showRightPanel 判断保持一致，且需面板展开（isPanelOpen）才真正缩进。
+  const appMode = useAtomValue(appModeAtom)
+  const automationForm = useAtomValue(automationFormAtom)
+  const activeView = useAtomValue(activeViewAtom)
+  const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const tabbarRightCollapsed =
+    appMode === 'agent'
+    && !!currentAgentSessionId
+    && !automationForm.open
+    && activeView !== 'planning'
+    && activeView !== 'agent-skills'
+    && isPanelOpen
   const setShortcutGuideOpen = useSetAtom(shortcutGuideOpenAtom)
   const setFaqDialogOpen = useSetAtom(faqDialogOpenAtom)
   const activeTab = React.useMemo(() => tabs.find((t) => t.id === activeTabId), [tabs, activeTabId])
@@ -430,6 +445,7 @@ function TabBarInner({
       <ShortcutGuideButton
         isWindows={isWindows}
         hasPanelButton={showOpenPanelButton}
+        tabbarRightCollapsed={tabbarRightCollapsed}
         onOpen={openShortcutGuide}
         onOpenFaq={openFaqDialog}
       />
@@ -446,21 +462,26 @@ function TabBarInner({
 function ShortcutGuideButton({
   isWindows,
   hasPanelButton,
+  tabbarRightCollapsed,
   onOpen,
   onOpenFaq,
 }: {
   isWindows: boolean
   hasPanelButton: boolean
+  /** TabBar 右缘是否被右侧 Agent 文件面板缩进（面板实际渲染且展开） */
+  tabbarRightCollapsed: boolean
   onOpen: () => void
   onOpenFaq: () => void
 }): React.ReactElement {
   return (
     <div
       className={cn(
-        "absolute flex items-center gap-1 titlebar-no-drag",
+        "absolute flex items-center gap-1 titlebar-no-drag inset-y-0 items-end pb-[3px] z-10 transition-[right] duration-200 ease-in-out",
+        // Windows：TabBar 右缘缩进时贴右缘（right-1，右侧就是面板，无空带）；否则避开 WindowControls（right-[126px]）。
+        // 不能用 fixed：面板（z-[60]）与 MainArea（z-[60]）同级且 DOM 靠后，fixed 子元素无法越过父容器层级盖住面板。
         isWindows
-          ? cn("top-[37px] h-7 z-[52]", hasPanelButton ? "right-9" : "right-1")
-          : cn("inset-y-0 items-end pb-[3px] z-10", hasPanelButton ? "right-9" : "right-1"),
+          ? (tabbarRightCollapsed ? "right-1" : WINDOW_CONTROLS_INSET_RIGHT)
+          : (hasPanelButton ? "right-9" : "right-1"),
       )}
     >
       {/* FAQ 快捷按钮（在快捷键地图左边） */}
