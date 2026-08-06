@@ -19,6 +19,7 @@ import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
 import { Box, CornerDownLeft, Square, Settings, X, Copy, Check, Brain, Sparkles, ChevronDown, ListTodo, Paperclip } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
+import { AttachmentContentDialog } from './AttachmentContentDialog'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessageQueue } from './AgentMessageQueue'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -1706,10 +1707,23 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     }
   }, [addLargeDialogFilesAsReferences, setPendingFiles])
 
-  /** 打开混合选择器：文件作为附件，文件夹仅授权给当前会话。 */
-  const handleAttachContent = React.useCallback(async (): Promise<void> => {
+  /** Composer 附加内容类型选择弹窗（替代系统原生 MessageBox）是否打开 */
+  const [attachContentDialogOpen, setAttachContentDialogOpen] = React.useState(false)
+  /** 重入锁：防止退出动画期间双击“文件/文件夹”重复打开系统选择器 */
+  const attachContentBusyRef = React.useRef(false)
+
+  /** 打开混合选择器：先弹 Proma 自身类型选择弹窗，文件作为附件，文件夹仅授权给当前会话。 */
+  const handleAttachContent = React.useCallback((): void => {
+    setAttachContentDialogOpen(true)
+  }, [])
+
+  /** 按用户选择的类型打开系统选择器，并复用原有附件/目录处理逻辑。 */
+  const handleAttachContentType = React.useCallback(async (type: 'file' | 'folder'): Promise<void> => {
+    if (attachContentBusyRef.current) return
+    attachContentBusyRef.current = true
+    setAttachContentDialogOpen(false)
     try {
-      const result = await window.electronAPI.openFileOrFolderDialog()
+      const result = await window.electronAPI.openFileOrFolderDialog(type)
       const largeFiles = result.largeFiles ?? []
       const skippedFiles = result.skippedFiles ?? []
       if (result.files.length === 0 && largeFiles.length === 0 && skippedFiles.length === 0 && result.directories.length === 0) return
@@ -1745,6 +1759,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     } catch (error) {
       console.error('[AgentView] 附加内容选择失败:', error)
       toast.error('附加文件或文件夹失败')
+    } finally {
+      attachContentBusyRef.current = false
     }
   }, [addDialogFilesAsAttachments, sessionId, setAttachedDirsMap])
 
@@ -2964,7 +2980,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               variant="ghost"
               size="icon"
               className={inputToolbarButtonClass}
-              onClick={() => void handleAttachContent()}
+              onClick={handleAttachContent}
               aria-label="附加文件或文件夹"
             >
               <Paperclip className="size-[17px]" />
@@ -3264,6 +3280,12 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         )}
       </div>
     </AgentSessionProvider>
+
+    <AttachmentContentDialog
+      open={attachContentDialogOpen}
+      onOpenChange={setAttachContentDialogOpen}
+      onSelect={(type) => void handleAttachContentType(type)}
+    />
 
     <Dialog open={todoDialogOpen} onOpenChange={setTodoDialogOpen}>
       <DialogContent className="max-w-lg">

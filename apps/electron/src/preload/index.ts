@@ -750,8 +750,8 @@ export interface ElectronAPI {
   /** 打开文件夹选择对话框 */
   openFolderDialog: () => Promise<{ path: string; name: string } | null>
 
-  /** 打开支持文件与文件夹混合选择的 Composer 对话框 */
-  openFileOrFolderDialog: () => Promise<FileOrFolderDialogResult>
+  /** 打开支持文件与文件夹混合选择的 Composer 对话框（类型由渲染层 Dialog 决定） */
+  openFileOrFolderDialog: (type: 'file' | 'folder') => Promise<FileOrFolderDialogResult>
 
   /** 附加外部目录到 Agent 会话 */
   attachDirectory: (input: AgentAttachDirectoryInput) => Promise<string[]>
@@ -2031,8 +2031,8 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.OPEN_FOLDER_DIALOG)
   },
 
-  openFileOrFolderDialog: () => {
-    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.OPEN_FILE_OR_FOLDER_DIALOG)
+  openFileOrFolderDialog: (type: 'file' | 'folder') => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.OPEN_FILE_OR_FOLDER_DIALOG, type)
   },
 
   attachDirectory: (input: AgentAttachDirectoryInput) => {

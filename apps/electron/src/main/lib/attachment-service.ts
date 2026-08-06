@@ -340,37 +340,22 @@ export async function openFileDialog(): Promise<FileDialogResult> {
 }
 
 /**
- * 打开 Agent Composer 的混合选择对话框。
- * 文件按附件语义读取，文件夹只返回路径，交由会话目录授权流程处理。
+ * 打开 Agent Composer 的内容选择对话框。
+ * 类型选择由渲染层用 Proma 自身 Dialog 完成（见 AttachmentContentDialog），
+ * 此处按调用方指定的类型直接打开对应系统选择器：
+ * - 'file'：文件选择器，文件按附件语义读取
+ * - 'folder'：文件夹选择器，目录只返回路径，交由会话目录授权流程处理
  */
-export async function openFileOrFolderDialog(): Promise<FileOrFolderDialogResult> {
+export async function openFileOrFolderDialog(type: 'file' | 'folder'): Promise<FileOrFolderDialogResult> {
+  // 运行时守卫：非法类型直接拒绝，避免被静默当作 'folder' 处理
+  if (type !== 'file' && type !== 'folder') {
+    throw new Error(`无效的附加内容类型: ${String(type)}`)
+  }
   const parentWindow = BrowserWindow.getFocusedWindow()
-  let dialogOptions: Electron.OpenDialogOptions
-
-  if (process.platform === 'win32' || process.platform === 'linux') {
-    const choiceOptions: Electron.MessageBoxOptions = {
-      type: 'question',
-      title: '附加文件或文件夹',
-      message: '请选择要附加的内容类型',
-      buttons: ['文件', '文件夹', '取消'],
-      defaultId: 0,
-      cancelId: 2,
-      noLink: true,
-    }
-    const choice = parentWindow
-      ? await dialog.showMessageBox(parentWindow, choiceOptions)
-      : await dialog.showMessageBox(choiceOptions)
-    if (choice.response === 2) return { files: [], directories: [] }
-
-    dialogOptions = choice.response === 0
+  const dialogOptions: Electron.OpenDialogOptions =
+    type === 'file'
       ? { properties: ['openFile', 'multiSelections'], filters: FILE_FILTERS, title: '附加文件' }
       : { properties: ['openDirectory', 'multiSelections'], title: '附加文件夹' }
-  } else {
-    dialogOptions = {
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
-      title: '附加文件或文件夹',
-    }
-  }
 
   const result = parentWindow
     ? await dialog.showOpenDialog(parentWindow, dialogOptions)
@@ -382,6 +367,6 @@ export async function openFileOrFolderDialog(): Promise<FileOrFolderDialogResult
 
   const directories: FileDialogDirectory[] = []
   const fileResult = readDialogFiles(result.filePaths, directories)
-  console.log(`[附件服务] 混合对话框选择了 ${fileResult.files.length} 个内存附件，${fileResult.largeFiles?.length ?? 0} 个大文件引用，${directories.length} 个目录，${fileResult.skippedFiles?.length ?? 0} 个跳过`)
+  console.log(`[附件服务] ${type === 'file' ? '文件' : '文件夹'}对话框选择了 ${fileResult.files.length} 个内存附件，${fileResult.largeFiles?.length ?? 0} 个大文件引用，${directories.length} 个目录，${fileResult.skippedFiles?.length ?? 0} 个跳过`)
   return { ...fileResult, directories }
 }

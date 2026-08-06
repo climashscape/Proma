@@ -2950,11 +2950,11 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 打开支持文件与文件夹混合选择的 Composer 对话框
+  // 打开文件或文件夹选择对话框（类型由渲染层 Dialog 决定）
   ipcMain.handle(
     AGENT_IPC_CHANNELS.OPEN_FILE_OR_FOLDER_DIALOG,
-    async (): Promise<FileOrFolderDialogResult> => {
-      return openFileOrFolderDialog()
+    async (_, type: 'file' | 'folder'): Promise<FileOrFolderDialogResult> => {
+      return openFileOrFolderDialog(type)
     }
   )
 
