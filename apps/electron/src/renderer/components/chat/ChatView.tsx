@@ -60,6 +60,8 @@ interface ChatViewProps {
   conversationId: string
   /** 视图形态：full 主 Tab 全功能；side-qa 右侧问答窄面板（裁剪头部/横幅/提示词侧栏/并排/迷你地图） */
   variant?: 'full' | 'side-qa'
+  /** side-qa 专用：关闭当前问答（解绑会话绑定），透传给 SideQaHeader */
+  onCloseSideQa?: () => void
 }
 
 function cleanupPendingAttachments(attachments: PendingAttachment[]): void {
@@ -71,15 +73,15 @@ function cleanupPendingAttachments(attachments: PendingAttachment[]): void {
   }
 }
 
-export function ChatView({ conversationId, variant = 'full' }: ChatViewProps): React.ReactElement {
+export function ChatView({ conversationId, variant = 'full', onCloseSideQa }: ChatViewProps): React.ReactElement {
   return (
     <ConversationProvider conversationId={conversationId}>
-      <ChatViewInner conversationId={conversationId} variant={variant} />
+      <ChatViewInner conversationId={conversationId} variant={variant} onCloseSideQa={onCloseSideQa} />
     </ConversationProvider>
   )
 }
 
-function ChatViewInner({ conversationId, variant }: ChatViewProps): React.ReactElement {
+function ChatViewInner({ conversationId, variant, onCloseSideQa }: ChatViewProps): React.ReactElement {
   const isSideQa = variant === 'side-qa'
   // ===== 本地状态（每个实例独立） =====
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
@@ -670,7 +672,7 @@ function ChatViewInner({ conversationId, variant }: ChatViewProps): React.ReactE
       {/* 主内容区域 */}
       <div className="flex flex-col h-full flex-1 min-w-0">
         {/* Header 在 max-w 外，按钮可到达最右侧；问答模式替换为精简头部（标题 + 来源标注） */}
-        {isSideQa ? <SideQaHeader conversation={conversation} /> : <ChatHeader conversation={conversation} />}
+        {isSideQa ? <SideQaHeader conversation={conversation} onClose={onCloseSideQa} /> : <ChatHeader conversation={conversation} />}
         <div className="flex flex-col flex-1 w-full max-w-[min(72rem,100%)] mx-auto overflow-hidden min-h-0">
           {/* 中间：消息区域 */}
           <ChatMessages

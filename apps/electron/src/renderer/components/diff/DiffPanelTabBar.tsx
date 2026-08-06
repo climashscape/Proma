@@ -6,7 +6,7 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { PanelRightClose, X } from 'lucide-react'
+import { PanelRightClose } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { WINDOW_CONTROLS_INSET_RIGHT } from '@/lib/platform'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -18,7 +18,6 @@ interface DiffPanelTabBarProps {
   activeTab: AgentSidePanelTab
   onTabChange: (tab: AgentSidePanelTab) => void
   onClose?: () => void
-  onCloseChat?: () => void
   showChatTab?: boolean
   isWindows?: boolean
 }
@@ -32,7 +31,6 @@ export function DiffPanelTabBar({
   activeTab,
   onTabChange,
   onClose,
-  onCloseChat,
   showChatTab = false,
   isWindows = false,
 }: DiffPanelTabBarProps): React.ReactElement {
@@ -116,9 +114,11 @@ export function DiffPanelTabBar({
           </span>
         </button>
         {showChatTab && (
-          <div
+          <button
+            type="button"
+            onClick={() => onTabChange('chat')}
             className={cn(
-              'flex-1 h-[34px] text-xs transition-colors select-none relative whitespace-nowrap overflow-hidden',
+              'flex-1 px-3 h-[34px] text-xs transition-colors select-none cursor-pointer whitespace-nowrap overflow-hidden',
               isClassic ? 'rounded-t-lg' : 'rounded-none',
               'border-t border-l border-r',
               activeTab === 'chat'
@@ -130,26 +130,8 @@ export function DiffPanelTabBar({
                   : 'app-tab-inactive text-muted-foreground border-transparent hover:text-foreground',
             )}
           >
-            <div className="flex h-full items-center">
-              <button
-                type="button"
-                onClick={() => onTabChange('chat')}
-                className="min-w-0 flex-1 self-stretch px-2 text-left"
-              >
-                <span className="block truncate text-center">问答</span>
-              </button>
-              {onCloseChat && (
-                <button
-                  type="button"
-                  className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted/70 hover:text-foreground"
-                  aria-label="关闭问答 Tab"
-                  onClick={onCloseChat}
-                >
-                  <X className="size-3" />
-                </button>
-              )}
-            </div>
-          </div>
+            问答
+          </button>
         )}
         {/* 右侧关闭按钮（常驻，三个 tab 下都可见） */}
         {onClose && (

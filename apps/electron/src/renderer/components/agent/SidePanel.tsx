@@ -493,10 +493,9 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       next.delete(sessionId)
       return next
     })
-    if (activeTab === 'chat') {
-      onTabChange('files')
-    }
-  }, [activeTab, onTabChange, sessionId, setSideChatMap])
+    // 解绑后停留在问答 Tab：有可选对话时自然回到「查看现有问答」列表；
+    // 无任何可选对话时由 effectiveActiveTab 兜底切回「文件」并隐藏问答 Tab。
+  }, [sessionId, setSideChatMap])
 
   /** 删除问答对话（「查看现有问答」列表行删除按钮） */
   const handleDeleteSideChat = React.useCallback(async (conversationId: string): Promise<void> => {
@@ -553,7 +552,6 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
             activeTab={effectiveActiveTab}
             onTabChange={onTabChange}
             onClose={() => setIsOpen(false)}
-            onCloseChat={handleCloseChatTab}
             showChatTab={Boolean(sideChatConversationId) || hasViewableConversations}
             isWindows={isWindows}
           />
@@ -561,7 +559,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
           {effectiveActiveTab === 'chat' ? (
             sideChatConversationId ? (
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ChatView conversationId={sideChatConversationId} variant="side-qa" />
+                <ChatView conversationId={sideChatConversationId} variant="side-qa" onCloseSideQa={handleCloseChatTab} />
               </div>
             ) : (
               <div className="flex-1 min-h-0 flex flex-col">

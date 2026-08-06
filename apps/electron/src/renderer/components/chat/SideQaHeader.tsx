@@ -10,6 +10,7 @@
  */
 
 import * as React from 'react'
+import { X } from 'lucide-react'
 import type { ConversationMeta } from '@proma/shared'
 
 /** 从文件名/路径中取 basename（与 SidePanel 的 getPathBasename 一致） */
@@ -38,16 +39,18 @@ export function buildSourceCaption(conversation: ConversationMeta): string | nul
 
 interface SideQaHeaderProps {
   conversation: ConversationMeta | null
+  /** 关闭当前问答（解绑会话绑定）；不传则不显示关闭按钮 */
+  onClose?: () => void
 }
 
-export function SideQaHeader({ conversation }: SideQaHeaderProps): React.ReactElement | null {
+export function SideQaHeader({ conversation, onClose }: SideQaHeaderProps): React.ReactElement | null {
   if (!conversation) return null
 
   const sourceCaption = buildSourceCaption(conversation)
 
   return (
     <div className="relative flex flex-col justify-center min-w-0 px-3 h-[48px] flex-shrink-0 select-none">
-      {/* 拖拽层：右侧问答头部整体可拖拽移动窗口（与 ChatHeader 一致，无按钮故无需 titlebar-no-drag 隔离） */}
+      {/* 拖拽层：右侧问答头部整体可拖拽移动窗口；关闭按钮区域单独 titlebar-no-drag 隔离 */}
       <div className="absolute inset-0 titlebar-drag-region pointer-events-none" />
       <span className="truncate text-sm font-medium text-foreground">
         {conversation.title}
@@ -56,6 +59,16 @@ export function SideQaHeader({ conversation }: SideQaHeaderProps): React.ReactEl
         <span className="truncate text-[11px] leading-4 text-muted-foreground">
           {sourceCaption}
         </span>
+      )}
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-2 top-1/2 -translate-y-1/2 titlebar-no-drag inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+          aria-label="关闭问答"
+        >
+          <X className="size-3.5" />
+        </button>
       )}
     </div>
   )
