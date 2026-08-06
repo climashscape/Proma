@@ -56,6 +56,8 @@ import { toast } from 'sonner'
 interface ChatInputProps {
   /** 当前对话 ID */
   conversationId: string
+  /** 视图形态：full 主 Tab 全功能；side-qa 右侧问答窄面板（精简工具栏 items，低频项优先折叠） */
+  variant?: 'full' | 'side-qa'
   /** 是否正在流式生成 */
   streaming: boolean
   /** 待发送附件列表 */
@@ -68,9 +70,13 @@ interface ChatInputProps {
   onStop: () => void
   /** 清除上下文回调 */
   onClearContext?: () => void
+  /** 移除引用 chip 回调（用于同步清空持久化的 seedSelection，避免首问仍注入已移除的引用） */
+  onRemoveQuotedSelection?: () => void
 }
 
-export function ChatInput({ conversationId, streaming, pendingAttachments, onSetPendingAttachments, onSend, onStop, onClearContext }: ChatInputProps): React.ReactElement {
+export function ChatInput({ conversationId, variant = 'full', streaming, pendingAttachments, onSetPendingAttachments, onSend, onStop, onClearContext, onRemoveQuotedSelection }: ChatInputProps): React.ReactElement {
+  const isSideQa = variant === 'side-qa'
+  const containerRef = React.useRef<HTMLDivElement>(null)
   const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   // 从 Map atom 读写草稿
   const draftsMap = useAtomValue(conversationDraftsAtom)
@@ -227,7 +233,9 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
       next.delete(conversationId)
       return next
     })
-  }, [conversationId, setQuotedSelectionMap])
+    // 同步通知父层清空持久化的 seedSelection，避免首问发送时仍注入已移除的引用
+    onRemoveQuotedSelection?.()
+  }, [conversationId, onRemoveQuotedSelection, setQuotedSelectionMap])
 
   /** 编辑完成 — 用编辑后的图片替换原 pending 附件 */
   const handleEditComplete = React.useCallback((attachmentId: string, editedDataUrl: string): void => {
@@ -299,28 +307,41 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
   }, [addFilesAsAttachments])
 
   // 监听快捷键系统分发的 clear-context 事件（Cmd+K）
+  // 事件携带 conversationId 时做精确寻址：非本实例对话忽略，避免主区 Chat 与右侧问答互抢
   React.useEffect(() => {
-    const handler = (): void => {
+    const handler = (e: Event): void => {
+      const detail = (e as CustomEvent).detail as { conversationId?: string } | undefined
+      if (detail?.conversationId && detail.conversationId !== conversationId) return
       onClearContext?.()
     }
     window.addEventListener('proma:clear-context', handler)
     return () => window.removeEventListener('proma:clear-context', handler)
-  }, [onClearContext])
+  }, [onClearContext, conversationId])
 
   // 监听快捷键系统分发的 focus-input 事件（Cmd+L）
+  // 先按 conversationId 过滤，再在本容器内查找 ProseMirror，精确聚焦当前实例。
+  // detail 缺失（undefined）→ 旧事件无目标信息，保持全响应兼容；
+  // detail.conversationId 显式 null → agent 模式（无 ChatInput 目标），不响应，避免与 AgentView 竞争；
+  // detail.conversationId 为字符串 → 精确寻址，仅匹配本实例。
+  // 容器内找不到 ProseMirror 时，用 data-conversation-id 属性全局兜底寻址（属性与容器 ref 同源，
+  // 覆盖 ref 因条件渲染未挂载等边缘情况）。
   React.useEffect(() => {
-    const handler = (): void => {
-      // 聚焦 TipTap 编辑器：查找 Chat 输入框内的 ProseMirror 元素
-      const proseMirror = document.querySelector('[data-input-mode="chat"] .ProseMirror') as HTMLElement | null
+    const handler = (e: Event): void => {
+      const detail = (e as CustomEvent).detail as { conversationId?: string | null } | undefined
+      if (detail !== undefined && detail.conversationId !== conversationId) return
+      let proseMirror = containerRef.current?.querySelector('.ProseMirror') as HTMLElement | null
+      if (!proseMirror) {
+        proseMirror = document.querySelector(`[data-conversation-id="${conversationId}"] .ProseMirror`) as HTMLElement | null
+      }
       proseMirror?.focus()
     }
     window.addEventListener('proma:focus-input', handler)
     return () => window.removeEventListener('proma:focus-input', handler)
-  }, [])
+  }, [conversationId])
 
-  const toolbarItems = React.useMemo<ToolbarItem[]>(() => [
-    { key: 'model', node: <ModelSelector excludedProviders={['openai-codex', 'xai']} useSharedOpenState /> },
-    {
+  const toolbarItems = React.useMemo<ToolbarItem[]>(() => {
+    const modelItem: ToolbarItem = { key: 'model', node: <ModelSelector excludedProviders={['openai-codex', 'xai']} useSharedOpenState /> }
+    const thinkingItem: ToolbarItem = {
       key: 'thinking',
       node: (
         <Tooltip>
@@ -343,8 +364,8 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
           </TooltipContent>
         </Tooltip>
       ),
-    },
-    {
+    }
+    const attachItem: ToolbarItem = {
       key: 'attach',
       node: (
         <Tooltip>
@@ -364,12 +385,19 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
           </TooltipContent>
         </Tooltip>
       ),
-    },
-    { key: 'speech', node: <SpeechButton className={inputToolbarButtonClass} voiceInputId={chatVoiceInputId} /> },
-    { key: 'tools', node: <ToolSelectorPopover /> },
-    { key: 'context', node: <ContextSettingsPopover /> },
-    { key: 'clear', node: <ClearContextButton onClick={onClearContext} /> },
-  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, onClearContext, chatVoiceInputId])
+    }
+    const speechItem: ToolbarItem = { key: 'speech', node: <SpeechButton className={inputToolbarButtonClass} voiceInputId={chatVoiceInputId} /> }
+    const toolsItem: ToolbarItem = { key: 'tools', node: <ToolSelectorPopover /> }
+    const contextItem: ToolbarItem = { key: 'context', node: <ContextSettingsPopover /> }
+    const clearItem: ToolbarItem = { key: 'clear', node: <ClearContextButton onClick={onClearContext} /> }
+
+    if (isSideQa) {
+      // 问答窄面板：语音/工具选择等低频项排在末尾，宽度不足时优先折叠进「更多」菜单
+      return [modelItem, thinkingItem, attachItem, contextItem, clearItem, speechItem, toolsItem]
+    }
+    // 主 Tab 全功能：保持原有顺序
+    return [modelItem, thinkingItem, attachItem, speechItem, toolsItem, contextItem, clearItem]
+  }, [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, onClearContext, chatVoiceInputId, isSideQa])
 
   const trailingNode = streaming ? (
     <Tooltip>
@@ -418,7 +446,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
   )
 
   return (
-    <div className="px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]" data-input-mode="chat">
+    <div className="px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]" data-input-mode="chat" ref={containerRef} data-conversation-id={conversationId}>
         {/* 卡片式输入容器 — 对标 Cherry Studio: border-radius 17px, 0.5px border */}
         <div
           className={cn(

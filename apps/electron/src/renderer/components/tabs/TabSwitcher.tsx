@@ -116,7 +116,8 @@ export function TabSwitcher(): ReactElement | null {
     }
 
     const chatCandidates = conversations
-      .filter((conversation) => !conversation.archived && !draftSessionIds.has(conversation.id))
+      // 排除问答会话：问答仅从右侧面板查看，不参与全局切换器寻址
+      .filter((conversation) => conversation.sourceType !== 'agent-side-qa' && !conversation.archived && !draftSessionIds.has(conversation.id))
       .map((conversation: ConversationMeta): SwitchCandidate => ({
         id: conversation.id,
         type: 'chat',

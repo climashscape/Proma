@@ -13,6 +13,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { extname } from 'node:path'
 import type { WebContents } from 'electron'
 import { CHAT_IPC_CHANNELS } from '@proma/shared'
 import type { ChatSendInput, ChatMessage, GenerateTitleInput, FileAttachment, ChatToolActivity } from '@proma/shared'
@@ -23,9 +25,10 @@ import {
 } from '@proma/core'
 import type { ImageAttachmentData, ContinuationMessage } from '@proma/core'
 import { listChannels, resolveChannelRuntimeApiKey } from './channel-manager'
-import { appendMessage, updateConversationMeta, getConversationMessages } from './conversation-manager'
+import { appendMessage, updateConversationMeta, getConversationMessages, getConversationMeta } from './conversation-manager'
+import { getAgentSessionMeta } from './agent-session-manager'
 import { readAttachmentAsBase64, isImageAttachment } from './attachment-service'
-import { extractTextFromAttachment, isDocumentAttachment } from './document-parser'
+import { extractTextFromAttachment, isDocumentAttachment, extractTextFromFile } from './document-parser'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { getEnabledTools } from './chat-tool-registry'
@@ -37,6 +40,139 @@ const activeControllers = new Map<string, AbortController>()
 
 /** 最大工具续接轮数（安全上限，防止极端情况下的无限循环） */
 const MAX_TOOL_ROUNDS = 999
+
+// ===== Agent 已选文件注入 =====
+
+/** Agent 已选文件注入：单文件文本上限（字节），超出截断 */
+const MAX_AGENT_FILE_CONTEXT_BYTES = 100 * 1024
+/** Agent 已选文件注入：全部文件总上限（字节），超出停止追加后续文件 */
+const MAX_AGENT_TOTAL_CONTEXT_BYTES = 500 * 1024
+
+/** 已知二进制扩展名：文本注入无意义且 UTF-8 直读会产生乱码，注入前直接跳过 */
+const BINARY_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp',
+  '.bin', '.exe', '.dll', '.so', '.dylib',
+  '.zip', '.7z', '.rar', '.tar', '.gz',
+])
+
+/**
+ * 判断文件扩展名是否为已知二进制格式（含点号小写比较）
+ */
+function isBinaryExtension(filePath: string): boolean {
+  return BINARY_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+/**
+ * 按 UTF-8 字节数安全截断文本
+ *
+ * Buffer.subarray 直接截断可能切断多字节字符（末尾残缺序列解码成 U+FFFD），
+ * 这里从截断点向前回退到合法的 UTF-8 首字节边界，保证输出可正常解码。
+ */
+function truncateUtf8ByBytes(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, 'utf-8')
+  if (buf.length <= maxBytes) return text
+  let end = maxBytes
+  // 若 maxBytes 落在续字节（10xxxxxx）上，说明该字符被切断，回退到其首字节之前
+  // （end 恒 < buf.length，索引不会越界，?? 0 仅为满足 noUncheckedIndexedAccess）
+  if (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) {
+    end--
+    while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end--
+  }
+  return buf.subarray(0, end).toString('utf-8')
+}
+
+/**
+ * 粗略判断文本是否像二进制内容被误读
+ *
+ * 未知扩展名按 UTF-8 直读二进制时会产生大量 U+FFFD 替换符，
+ * 满足「替换符不少于 4 个且占比超过 5%」即视为二进制，跳过注入。
+ */
+function looksLikeBinaryText(text: string): boolean {
+  if (text.length === 0) return false
+  const replacementCount = (text.match(/\uFFFD/g) ?? []).length
+  return replacementCount >= 4 && replacementCount / text.length > 0.05
+}
+
+/**
+ * XML 属性转义（quoted_file 的 path 属性，与 renderer lib/quoted-selection.ts 对齐）
+ */
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
+ * 引用块文本净化：防止文件内容中的闭合标签提前终止引用块
+ * （与 renderer lib/quoted-selection.ts 的 sanitizeQuotedText 对齐）
+ */
+function sanitizeQuotedText(value: string): string {
+  return value.replace(/<\/quoted_file>/gi, '</quoted_file_>')
+}
+
+/**
+ * 构建 Agent 已选文件上下文块
+ *
+ * 问答会话（agent-side-qa）发送消息时，自动带上归属 Agent 会话的
+ * attachedFiles（Agent 正在操作的代码），使追问能引用最新文件内容。
+ * 普通 chat 会话没有 parentAgentSessionId，直接返回空串（零开销）。
+ *
+ * 块格式与 renderer 的 parseQuotedSelectionRefs 同构（<quoted_file>），
+ * 注入到 userMessage 前部，避免污染问答会话自定义系统提示。
+ *
+ * @param conversationId 对话 ID
+ * @returns 拼接好的引用块（无归属会话或文件时为 ''）
+ */
+async function buildAgentAttachedFilesContext(conversationId: string): Promise<string> {
+  try {
+    // 普通 chat 会话没有归属 Agent 会话，零开销跳过
+    const convMeta = getConversationMeta(conversationId)
+    if (!convMeta?.parentAgentSessionId) return ''
+
+    // Agent 会话已删除或未记录已选文件时跳过
+    const agentSession = getAgentSessionMeta(convMeta.parentAgentSessionId)
+    if (!agentSession?.attachedFiles || agentSession.attachedFiles.length === 0) return ''
+
+    const blocks: string[] = []
+    let totalBytes = 0
+    for (const filePath of agentSession.attachedFiles) {
+      if (!existsSync(filePath)) continue
+      // 已知二进制扩展名直接跳过（图片/压缩包/可执行文件等，注入无意义）
+      if (isBinaryExtension(filePath)) continue
+      try {
+        const text = await extractTextFromFile(filePath)
+        if (!text.trim()) continue
+        // 未知扩展名被当作文本直读时，若内容含大量替换符则视为二进制误读，跳过注入
+        if (looksLikeBinaryText(text)) {
+          console.warn(`[聊天服务] Agent 已选文件疑似二进制内容，跳过注入: ${filePath}`)
+          continue
+        }
+
+        // 单文件截断：按 UTF-8 字节数判断并安全截断，避免切断多字节字符（如中文）
+        const truncated = Buffer.byteLength(text, 'utf-8') > MAX_AGENT_FILE_CONTEXT_BYTES
+          ? truncateUtf8ByBytes(text, MAX_AGENT_FILE_CONTEXT_BYTES) + '\n... [文件过长已截断]'
+          : text
+
+        const block = `<quoted_file path="${escapeXmlAttribute(filePath)}">\n${sanitizeQuotedText(truncated)}\n</quoted_file>\n\n`
+        // 追加前预检总量，避免单个文件块让实际注入超过上限
+        const blockBytes = Buffer.byteLength(block, 'utf-8')
+        if (totalBytes + blockBytes > MAX_AGENT_TOTAL_CONTEXT_BYTES) break
+        totalBytes += blockBytes
+        blocks.push(block)
+      } catch (error) {
+        // 对齐现有文档附件容错：单文件失败仅跳过，不影响主流程
+        console.warn(`[聊天服务] Agent 已选文件提取失败，跳过: ${filePath}`, error)
+      }
+    }
+    return blocks.join('')
+  } catch (error) {
+    // 会话查询等异常不影响主流程
+    console.warn(`[聊天服务] 构建 Agent 已选文件上下文失败，跳过注入: ${conversationId}`, error)
+    return ''
+  }
+}
 
 // ===== 平台相关：图片附件读取器 =====
 
@@ -253,6 +389,11 @@ export async function sendMessage(
   const enrichedHistory = await enrichHistoryWithDocuments(filteredHistory)
   const enrichedUserMessage = await enrichMessageWithDocuments(userMessage, attachments)
 
+  // Agent 已选文件注入：问答会话自动带上归属 Agent 会话的 attachedFiles 内容
+  // （工具续接循环多次调用 buildStreamRequest，缓存到变量避免每次重读文件）
+  const agentContextBlock = await buildAgentAttachedFilesContext(conversationId)
+  const effectiveUserMessage = agentContextBlock + enrichedUserMessage
+
   // 6. 创建 AbortController
   const controller = new AbortController()
   activeControllers.set(conversationId, controller)
@@ -327,7 +468,7 @@ export async function sendMessage(
         apiKey,
         modelId,
         history: enrichedHistory,
-        userMessage: enrichedUserMessage,
+        userMessage: effectiveUserMessage,
         systemMessage: effectiveSystemMessage,
         attachments,
         readImageAttachments: getImageAttachmentData,
@@ -403,7 +544,7 @@ export async function sendMessage(
         apiKey,
         modelId,
         history: enrichedHistory,
-        userMessage: enrichedUserMessage,
+        userMessage: effectiveUserMessage,
         systemMessage: effectiveSystemMessage,
         attachments,
         readImageAttachments: getImageAttachmentData,

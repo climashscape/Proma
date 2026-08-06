@@ -19,15 +19,11 @@ import { FileDown, List, ListTodo, PanelRight, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { scratchPadContentAtom, scratchPadLoadedAtom, tabsAtom, activeTabIdAtom } from '@/atoms/tab-atoms'
 import {
-  agentDiffPanelTabAtom,
-  agentSidePanelOpenAtom,
-  currentAgentSessionIdAtom,
   currentAgentWorkspaceIdAtom,
   agentSessionsAtom,
   agentWorkspacesAtom,
 } from '@/atoms/agent-atoms'
-import { agentSideChatMapAtom, conversationsAtom, conversationDraftsAtom, selectedModelAtom } from '@/atoms/chat-atoms'
-import { appModeAtom } from '@/atoms/app-mode'
+import { useOpenSideChat } from '@/hooks/useOpenSideChat'
 import { quotedSelectionMapAtom } from '@/atoms/preview-atoms'
 import { useFocusAgentSessionInput } from '@/hooks/useFocusAgentSessionInput'
 import {
@@ -145,7 +141,6 @@ function ScratchPadEditor({ variant }: ScratchPadEditorProps): React.ReactElemen
   const [selection, setSelection] = React.useState<ScratchPadSelection | null>(null)
   const pointerSelectingRef = React.useRef(false)
   const captureTimerRef = React.useRef<number | null>(null)
-  const openSideChatPendingRef = React.useRef(false)
   const voicePreviewRef = React.useRef<VoiceDictationPreviewRange | null>(null)
 
   // Image lightbox state for edit functionality
@@ -158,14 +153,6 @@ function ScratchPadEditor({ variant }: ScratchPadEditorProps): React.ReactElemen
   contentRef.current = content
 
   const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
-  const selectedChatModel = useAtomValue(selectedModelAtom)
-  const setConversations = useSetAtom(conversationsAtom)
-  const setConversationDrafts = useSetAtom(conversationDraftsAtom)
-  const setAgentSideChatMap = useSetAtom(agentSideChatMapAtom)
-  const setAgentSidePanelOpen = useSetAtom(agentSidePanelOpenAtom)
-  const setAgentSidePanelTabMap = useSetAtom(agentDiffPanelTabAtom)
-  const setCurrentAgentSessionId = useSetAtom(currentAgentSessionIdAtom)
-  const setAppMode = useSetAtom(appModeAtom)
   const focusAgentSessionInput = useFocusAgentSessionInput()
 
   const extensions = React.useMemo(() => [
@@ -422,74 +409,29 @@ function ScratchPadEditor({ variant }: ScratchPadEditorProps): React.ReactElemen
     focusAgentSessionInput(sessionId)
   }, [clearSelection, focusAgentSessionInput, getTargetAgentSessionId, selection, setQuotedSelectionMap])
 
+  const openSideChat = useOpenSideChat({
+    title: '草稿选区问答',
+    sourceKind: 'scratch-pad',
+    sourceLabel: '草稿页',
+    switchToAgentMode: true,
+    errorLogPrefix: 'ScratchPad',
+  })
+
   const handleOpenSideChat = React.useCallback(async (): Promise<void> => {
     if (!selection) return
-    if (openSideChatPendingRef.current) return
     const sessionId = getTargetAgentSessionId()
     if (!sessionId) return
 
-    openSideChatPendingRef.current = true
-    try {
-      const conversation = await window.electronAPI.createConversation(
-        '草稿选区问答',
-        selectedChatModel?.modelId,
-        selectedChatModel?.channelId,
-      )
-      setConversations((prev) => {
-        if (prev.some((item) => item.id === conversation.id)) return prev
-        return [conversation, ...prev]
-      })
-      setConversationDrafts((prev) => {
-        const next = new Map(prev)
-        next.set(conversation.id, '我的问题：')
-        return next
-      })
-      setQuotedSelectionMap((prev) => {
-        const next = new Map(prev)
-        next.set(conversation.id, {
-          text: selection.text,
-          filePath: '草稿页',
-          sourceType: 'scratch-pad',
-          sourceLabel: '草稿页',
-          capturedAt: Date.now(),
-        })
-        return next
-      })
-      setCurrentAgentSessionId(sessionId)
-      setAppMode('agent')
-      setAgentSideChatMap((prev) => {
-        const next = new Map(prev)
-        next.set(sessionId, conversation.id)
-        return next
-      })
-      setAgentSidePanelOpen(true)
-      setAgentSidePanelTabMap((prev) => {
-        const next = new Map(prev)
-        next.set(sessionId, 'chat')
-        return next
-      })
+    const ok = await openSideChat(sessionId, {
+      text: selection.text,
+      sourceType: 'scratch-pad',
+      sourceLabel: '草稿页',
+    })
+    if (ok) {
       window.getSelection()?.removeAllRanges()
       clearSelection()
-    } catch (error) {
-      console.error('[ScratchPad] 打开草稿选区右侧问答失败:', error)
-      toast.error('打开右侧问答失败')
-    } finally {
-      openSideChatPendingRef.current = false
     }
-  }, [
-    clearSelection,
-    getTargetAgentSessionId,
-    selectedChatModel,
-    selection,
-    setAgentSideChatMap,
-    setAgentSidePanelOpen,
-    setAgentSidePanelTabMap,
-    setAppMode,
-    setConversationDrafts,
-    setConversations,
-    setCurrentAgentSessionId,
-    setQuotedSelectionMap,
-  ])
+  }, [clearSelection, getTargetAgentSessionId, openSideChat, selection])
 
   const makeFilename = () => {
     const now = new Date()

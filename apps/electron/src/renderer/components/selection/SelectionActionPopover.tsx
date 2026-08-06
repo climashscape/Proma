@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Bot, MessageCircle } from 'lucide-react'
+import { Bot, MessageSquarePlus } from 'lucide-react'
 
 interface SelectionActionPopoverProps {
   x: number
@@ -37,8 +37,8 @@ export function SelectionActionPopover({
             void onOpenChat()
           }}
         >
-          <MessageCircle className="size-4" />
-          打开右侧问答
+          <MessageSquarePlus className="size-4" />
+          新建问答对话
         </button>
       </div>
     </div>

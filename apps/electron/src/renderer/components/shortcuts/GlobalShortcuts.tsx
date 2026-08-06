@@ -74,6 +74,9 @@ export function GlobalShortcuts(): null {
   const setSendWithCmdEnter = useSetAtom(sendWithCmdEnterAtom)
   const { createChat, createAgent } = useCreateSession()
 
+  // 当前 Chat 对话 ID：快捷键分发时携带，供 ChatInput 精确寻址（主区 Chat 与右侧问答并存时不互抢焦点）
+  const currentConversationId = useAtomValue(currentConversationIdAtom)
+
   // Tab 管理（用于关闭标签页）
   const activeTabId = useAtomValue(activeTabIdAtom)
 
@@ -188,28 +191,30 @@ export function GlobalShortcuts(): null {
     ),
   )
 
-  // Cmd+K → 清除上下文（通过 CustomEvent 分发到 ChatInput）
+  // Cmd+K → 清除上下文（通过 CustomEvent 分发到 ChatInput，携带当前对话 ID 精确寻址）
   useShortcut(
     'clear-context',
     useCallback(() => {
-      window.dispatchEvent(new CustomEvent('proma:clear-context'))
-    }, []),
+      window.dispatchEvent(new CustomEvent('proma:clear-context', { detail: { conversationId: currentConversationId } }))
+    }, [currentConversationId]),
   )
 
-  // Cmd+L → 聚焦输入框（通过 CustomEvent 分发到 ChatInput/AgentView）
+  // Cmd+L → 聚焦输入框（通过 CustomEvent 分发到 ChatInput/AgentView，携带当前对话 ID 精确寻址）
   useShortcut(
     'focus-input',
     useCallback(() => {
-      window.dispatchEvent(new CustomEvent('proma:focus-input'))
-    }, []),
+      window.dispatchEvent(new CustomEvent('proma:focus-input', { detail: { conversationId: currentConversationId } }))
+    }, [currentConversationId]),
   )
 
-  // Cmd+Shift+Backspace → 停止 Agent（通过 CustomEvent 分发到 ChatView/AgentView）
+  // Cmd+Shift+Backspace → 停止生成（通过 CustomEvent 分发到 ChatView/AgentView，携带当前对话 ID 精确寻址）
+  // chat 模式下带 currentConversationId，ChatView 按 detail 过滤避免主区 Chat 与右侧问答互抢；
+  // agent 模式下为 null，AgentView 保持全量响应（detail 不匹配即停止 Agent 会话）。
   useShortcut(
     'stop-generation',
     useCallback(() => {
-      window.dispatchEvent(new CustomEvent('proma:stop-generation'))
-    }, []),
+      window.dispatchEvent(new CustomEvent('proma:stop-generation', { detail: { conversationId: currentConversationId } }))
+    }, [currentConversationId]),
   )
 
   // ===== 快速任务窗口 → 创建会话并自动发送 =====
@@ -389,7 +394,8 @@ export function GlobalShortcuts(): null {
       }))
       if (insertedAtCursor) {
         acknowledgeDelivery(true)
-        window.dispatchEvent(new CustomEvent('proma:focus-input'))
+        // 已插入光标场景：仍携带当前对话 ID，ChatInput 精确寻址兜底
+        window.dispatchEvent(new CustomEvent('proma:focus-input', { detail: { conversationId: store.get(currentConversationIdAtom) } }))
         return
       }
 
@@ -431,7 +437,9 @@ export function GlobalShortcuts(): null {
           map.delete(sessionId)
           return map
         })
-        window.dispatchEvent(new CustomEvent('proma:focus-input'))
+        // 显式 null = 仅 Agent 目标（与 chat 分支带实际 conversationId 语义统一：
+        // null 让 ChatInput 精确寻址时跳过，避免与右侧问答输入框竞争焦点）
+        window.dispatchEvent(new CustomEvent('proma:focus-input', { detail: { conversationId: null } }))
         acknowledgeDelivery(true)
         return
       }
@@ -446,7 +454,7 @@ export function GlobalShortcuts(): null {
           map.set(conversationId, current ? `${current}\n${trimmed}` : trimmed)
           return map
         })
-        window.dispatchEvent(new CustomEvent('proma:focus-input'))
+        window.dispatchEvent(new CustomEvent('proma:focus-input', { detail: { conversationId } }))
         acknowledgeDelivery(true)
         return
       }

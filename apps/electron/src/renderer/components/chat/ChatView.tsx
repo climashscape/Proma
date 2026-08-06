@@ -17,6 +17,7 @@ import * as React from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { AlertCircle, X } from 'lucide-react'
 import { ChatHeader } from './ChatHeader'
+import { SideQaHeader } from './SideQaHeader'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput } from './ChatInput'
 import { AgentRecommendBanner } from './AgentRecommendBanner'
@@ -57,6 +58,8 @@ import type {
 
 interface ChatViewProps {
   conversationId: string
+  /** 视图形态：full 主 Tab 全功能；side-qa 右侧问答窄面板（裁剪头部/横幅/提示词侧栏/并排/迷你地图） */
+  variant?: 'full' | 'side-qa'
 }
 
 function cleanupPendingAttachments(attachments: PendingAttachment[]): void {
@@ -68,15 +71,16 @@ function cleanupPendingAttachments(attachments: PendingAttachment[]): void {
   }
 }
 
-export function ChatView({ conversationId }: ChatViewProps): React.ReactElement {
+export function ChatView({ conversationId, variant = 'full' }: ChatViewProps): React.ReactElement {
   return (
     <ConversationProvider conversationId={conversationId}>
-      <ChatViewInner conversationId={conversationId} />
+      <ChatViewInner conversationId={conversationId} variant={variant} />
     </ConversationProvider>
   )
 }
 
-function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
+function ChatViewInner({ conversationId, variant }: ChatViewProps): React.ReactElement {
+  const isSideQa = variant === 'side-qa'
   // ===== 本地状态（每个实例独立） =====
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [contextDividers, setContextDividers] = React.useState<string[]>([])
@@ -294,9 +298,24 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     }
 
     const quotedSelection = store.get(quotedSelectionMapAtom).get(conversationId)
+    // 追问延续：seedSelection 每次发送都带（不消费），quotedSelection 仅首问覆盖
+    const seed = conversation?.seedSelection
+    const seedBlock = seed
+      ? buildQuotedSelectionBlock({
+          text: seed.text,
+          filePath: seed.filePath ?? seed.sourceLabel ?? '',
+          // 类型已收窄为字面量联合，与 QuotedSelectionSourceType / messageRole 完全一致，自然流动
+          sourceType: seed.sourceType,
+          sourceLabel: seed.sourceLabel,
+          messageId: seed.messageId,
+          messageRole: seed.messageRole,
+          // 仅占位：buildQuotedSelectionBlock 不读取 capturedAt
+          capturedAt: 0,
+        })
+      : ''
     const finalContent = quotedSelection
       ? buildQuotedSelectionBlock(quotedSelection) + content
-      : content
+      : seedBlock + content
 
     if (quotedSelection) {
       const capturedAt = quotedSelection.capturedAt
@@ -392,8 +411,25 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     setChatStreamErrors,
     setStreamingStates,
     setConversations,
+    conversation,
     store,
   ])
+
+  /** 用户手动移除引用 chip：同步清空持久化 seedSelection，避免首问发送仍注入已移除的引用 */
+  const handleRemoveQuotedSelection = React.useCallback((): void => {
+    setConversations((prev) => {
+      const idx = prev.findIndex((c) => c.id === conversationId)
+      if (idx === -1) return prev
+      const conv = prev[idx]!
+      if (!conv.seedSelection) return prev
+      const next = [...prev]
+      next[idx] = { ...conv, seedSelection: undefined }
+      return next
+    })
+    void window.electronAPI.clearConversationSeedSelection(conversationId).catch((error) => {
+      console.error('[ChatView] 清空首问引用种子失败:', error)
+    })
+  }, [conversationId, setConversations])
 
   // ===== 自动发送快速任务消息 =====
   // 使用 queueMicrotask 延迟发送：microtask 在当前任务结束后、React 下一次渲染前执行，
@@ -469,13 +505,17 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   }, [conversationId, setStreamingStates])
 
   // 监听快捷键系统分发的 stop-generation 事件
+  // 事件携带 conversationId 时做精确寻址：非本实例对话忽略，避免主区 Chat 与右侧问答同时流式时一次快捷键互抢；
+  // detail 缺失（undefined）→ 兼容旧事件全量响应；显式 null → agent 模式语义（仅 AgentView 目标），本实例不响应。
   React.useEffect(() => {
-    const handler = (): void => {
+    const handler = (e: Event): void => {
+      const detail = (e as CustomEvent).detail as { conversationId?: string | null } | undefined
+      if (detail !== undefined && detail.conversationId !== conversationId) return
       if (isStreaming) handleStop()
     }
     window.addEventListener('proma:stop-generation', handler)
     return () => window.removeEventListener('proma:stop-generation', handler)
-  }, [isStreaming, handleStop])
+  }, [isStreaming, handleStop, conversationId])
 
   /** 删除消息 */
   const handleDeleteMessage = React.useCallback(async (messageId: string): Promise<void> => {
@@ -629,12 +669,13 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     <div className="flex h-full overflow-hidden">
       {/* 主内容区域 */}
       <div className="flex flex-col h-full flex-1 min-w-0">
-        {/* Header 在 max-w 外，按钮可到达最右侧 */}
-        <ChatHeader conversation={conversation} />
+        {/* Header 在 max-w 外，按钮可到达最右侧；问答模式替换为精简头部（标题 + 来源标注） */}
+        {isSideQa ? <SideQaHeader conversation={conversation} /> : <ChatHeader conversation={conversation} />}
         <div className="flex flex-col flex-1 w-full max-w-[min(72rem,100%)] mx-auto overflow-hidden min-h-0">
           {/* 中间：消息区域 */}
           <ChatMessages
             conversationId={conversationId}
+            variant={variant}
             messages={messages}
             messagesLoaded={messagesLoaded}
             streaming={isStreaming}
@@ -677,34 +718,38 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
             </div>
           )}
 
-          {/* Agent 模式推荐横幅 */}
-          <AgentRecommendBanner />
+          {/* Agent 模式推荐横幅（仅主 Tab 全功能视图；问答窄面板无空间不展示） */}
+          {!isSideQa && <AgentRecommendBanner />}
 
           {/* 底部：输入框 */}
           <ChatInput
             conversationId={conversationId}
+            variant={variant}
             streaming={isStreaming}
             pendingAttachments={pendingAttachments}
             onSetPendingAttachments={setPendingAttachments}
             onSend={handleSend}
             onStop={handleStop}
             onClearContext={handleClearContext}
+            onRemoveQuotedSelection={handleRemoveQuotedSelection}
           />
         </div>
       </div>
 
-      {/* 提示词编辑侧栏 */}
-      <div className={cn(
-        'relative flex-shrink-0 transition-[width] duration-300 ease-in-out overflow-hidden titlebar-drag-region',
-        promptSidebarOpen ? 'w-[300px] border-l' : 'w-10'
-      )}>
+      {/* 提示词编辑侧栏（仅主 Tab 全功能视图；问答窄面板 300px 侧栏必然溢出） */}
+      {!isSideQa && (
         <div className={cn(
-          'w-[300px] h-full transition-opacity duration-200 titlebar-no-drag',
-          promptSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          'relative flex-shrink-0 transition-[width] duration-300 ease-in-out overflow-hidden titlebar-drag-region',
+          promptSidebarOpen ? 'w-[300px] border-l' : 'w-10'
         )}>
-          <PromptEditorSidebar />
+          <div className={cn(
+            'w-[300px] h-full transition-opacity duration-200 titlebar-no-drag',
+            promptSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          )}>
+            <PromptEditorSidebar />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

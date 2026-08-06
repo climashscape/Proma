@@ -64,17 +64,42 @@ export function listConversations(): ConversationMeta[] {
 }
 
 /**
+ * 获取单个对话的元数据
+ *
+ * 问答会话继承链路使用：读取归属的 parentAgentSessionId 等字段。
+ *
+ * @param id 对话 ID
+ * @returns 对话元数据（不存在时返回 undefined）
+ */
+export function getConversationMeta(id: string): ConversationMeta | undefined {
+  const index = readIndex()
+  return index.conversations.find((c) => c.id === id)
+}
+
+/**
  * 创建新对话
  *
  * @param title 对话标题（默认"新对话"）
  * @param modelId 默认模型 ID
  * @param channelId 使用的渠道 ID
+ * @param sourceType 会话类型（chat / agent-side-qa）
+ * @param parentAgentSessionId 归属的 Agent 会话 ID（agent-side-qa 会话）
+ * @param sourceKind 首问选区来源
+ * @param sourceRef 来源引用：messageId / filePath
+ * @param sourceLabel 来源展示标签
+ * @param seedSelection 首问引用种子（用于追问延续）
  * @returns 创建的对话元数据
  */
 export function createConversation(
   title?: string,
   modelId?: string,
   channelId?: string,
+  sourceType?: ConversationMeta['sourceType'],
+  parentAgentSessionId?: string,
+  sourceKind?: ConversationMeta['sourceKind'],
+  sourceRef?: string,
+  sourceLabel?: string,
+  seedSelection?: ConversationMeta['seedSelection'],
 ): ConversationMeta {
   const index = readIndex()
   const now = Date.now()
@@ -84,6 +109,13 @@ export function createConversation(
     title: title || '新对话',
     modelId,
     channelId,
+    // 问答 Tab 归属/来源/种子字段（全部可选，旧数据缺省视为 chat）
+    sourceType,
+    parentAgentSessionId,
+    sourceKind,
+    sourceRef,
+    sourceLabel,
+    seedSelection,
     createdAt: now,
     updatedAt: now,
   }
@@ -283,6 +315,37 @@ export function deleteConversation(id: string): void {
 }
 
 /**
+ * 清空对话的首问引用种子（用户手动移除引用 chip 后调用）
+ *
+ * 独立实现而非复用 updateConversationMeta：避免归档会话被自动取消归档，
+ * 且 seedSelection 不在 updateConversationMeta 的更新白名单内。
+ *
+ * @param id 对话 ID
+ * @returns 更新后的对话元数据
+ */
+export function clearConversationSeedSelection(id: string): ConversationMeta {
+  const index = readIndex()
+  const idx = index.conversations.findIndex((c) => c.id === id)
+
+  if (idx === -1) {
+    throw new Error(`对话不存在: ${id}`)
+  }
+
+  const existing = index.conversations[idx]!
+  const updated: ConversationMeta = {
+    ...existing,
+    seedSelection: undefined,
+    updatedAt: Date.now(),
+  }
+
+  index.conversations[idx] = updated
+  writeIndex(index)
+
+  console.log(`[对话管理] 已清空首问引用种子: ${updated.title} (${updated.id})`)
+  return updated
+}
+
+/**
  * 删除指定消息
  *
  * 读取 JSONL → 过滤掉目标消息 → 覆写文件 → 返回更新后消息列表。
@@ -414,6 +477,9 @@ export async function searchConversationMessages(query: string): Promise<Message
 
   for (const conv of index.conversations) {
     if (results.length >= maxResults) break
+
+    // 跳过问答会话（agent-side-qa），避免在全局搜索中暴露/点开后污染 Chat 主区
+    if (conv.sourceType === 'agent-side-qa') continue
 
     const filePath = getConversationMessagesPath(conv.id)
     if (!existsSync(filePath)) continue

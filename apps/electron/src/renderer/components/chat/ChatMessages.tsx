@@ -119,6 +119,8 @@ function ScrollTopLoader({ hasMore, loading, onLoadMore }: ScrollTopLoaderProps)
 interface ChatMessagesProps {
   /** 当前对话 ID */
   conversationId: string
+  /** 视图形态：full 主 Tab 全功能；side-qa 右侧问答窄面板（裁剪迷你地图/并排模式） */
+  variant?: 'full' | 'side-qa'
   /** 消息列表 */
   messages: ChatMessage[]
   /** 消息是否已完成首次 IPC 加载 */
@@ -159,13 +161,24 @@ interface ChatMessagesProps {
   onImageEditComplete?: (editedDataUrl: string) => void
 }
 
-/** 空状态引导 — 使用 WelcomeEmptyState */
-function EmptyState(): React.ReactElement {
+/** 空状态引导 — 使用 WelcomeEmptyState；问答窄面板用精简文案（避免完整欢迎页的模式切换 Tab 误触卸载面板） */
+function EmptyState({ variant }: { variant?: 'full' | 'side-qa' }): React.ReactElement {
+  if (variant === 'side-qa') {
+    return (
+      <div className="flex h-full min-h-[140px] items-center justify-center px-6 text-center">
+        <div className="space-y-2">
+          <p className="text-[13px] text-foreground/60">暂无消息，发送第一条消息开始问答</p>
+          <p className="text-[11px] text-foreground/35">可在侧栏直接输入，或划选文本后点「新建问答对话」</p>
+        </div>
+      </div>
+    )
+  }
   return <WelcomeEmptyState />
 }
 
 export function ChatMessages({
   conversationId,
+  variant = 'full',
   messages,
   messagesLoaded,
   streaming,
@@ -312,19 +325,26 @@ export function ChatMessages({
   }, [parallelMode, hasMore, handleLoadMore])
 
   // 迷你地图数据（必须在所有条件分支之前调用，遵守 hooks 规则）
+  // side-qa 窄面板不渲染 ScrollMinimap（见下方条件渲染），此处跳过计算避免冗余开销；
+  // 守卫写在 hook 内部而非条件调用，遵守 hooks 规则。
   const minimapItems: MinimapItem[] = React.useMemo(
-    () => messages.map((m) => ({
-      id: m.id,
-      role: m.role as MinimapItem['role'],
-      preview: m.content.slice(0, 200),
-      avatar: m.role === 'user' ? userProfile.avatar : undefined,
-      model: m.model,
-    })),
-    [messages, userProfile.avatar]
+    () => {
+      if (variant === 'side-qa') return []
+      return messages.map((m) => ({
+        id: m.id,
+        role: m.role as MinimapItem['role'],
+        preview: m.content.slice(0, 200),
+        avatar: m.role === 'user' ? userProfile.avatar : undefined,
+        model: m.model,
+      }))
+    },
+    [messages, userProfile.avatar, variant]
   )
 
   // 同步 minimap 缓存到 Tab 级别（供 Tab hover 预览使用）
+  // side-qa 窄面板无需写缓存（主区 Chat 的 Tab 预览才需要），同样用内部守卫跳过。
   React.useEffect(() => {
+    if (variant === 'side-qa') return
     if (minimapItems.length > 0) {
       setMinimapCache((prev) => {
         const next = new Map(prev)
@@ -332,10 +352,10 @@ export function ChatMessages({
         return next
       })
     }
-  }, [conversationId, minimapItems, setMinimapCache])
+  }, [conversationId, minimapItems, setMinimapCache, variant])
 
-  // 并排模式
-  if (parallelMode) {
+  // 并排模式（仅主 Tab 全功能视图；问答窄面板无空间不启用）
+  if (variant !== 'side-qa' && parallelMode) {
     return (
       <ParallelChatMessages
         messages={messages}
@@ -371,7 +391,7 @@ export function ChatMessages({
       />
       <ConversationContent>
         {messages.length === 0 && !streaming ? (
-          <EmptyState />
+          <EmptyState variant={variant} />
         ) : (
           <>
             {/* 已有消息 + 分隔线 */}
@@ -444,7 +464,8 @@ export function ChatMessages({
           </>
         )}
       </ConversationContent>
-      <ScrollMinimap items={minimapItems} />
+      {/* 迷你地图（仅主 Tab 全功能视图；问答窄面板无空间不渲染） */}
+      {variant !== 'side-qa' && <ScrollMinimap items={minimapItems} />}
       <ConversationScrollButton />
     </Conversation>
   )

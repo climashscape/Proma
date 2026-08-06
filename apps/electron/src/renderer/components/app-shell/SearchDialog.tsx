@@ -301,7 +301,8 @@ export function SearchDialog(): React.ReactElement {
     const qLower = q.toLowerCase()
     const titles: TitleResult[] = [
       ...conversations
-        .filter((c) => c.title.toLowerCase().includes(qLower))
+        // 排除问答会话：避免在全局搜索中暴露/点开后污染 Chat 主区
+        .filter((c) => c.sourceType !== 'agent-side-qa' && c.title.toLowerCase().includes(qLower))
         .map((c) => ({ id: c.id, title: c.title, type: 'chat' as const, archived: c.archived, updatedAt: c.updatedAt })),
       ...agentSessions
         .filter((s) => s.title.toLowerCase().includes(qLower))

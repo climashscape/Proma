@@ -7,7 +7,8 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { X, ExternalLink, ChevronRight, MoreHorizontal, FolderSearch, Pencil, FolderInput, MessageSquarePlus } from 'lucide-react'
+import { X, ExternalLink, ChevronRight, MoreHorizontal, FolderSearch, Pencil, FolderInput, MessageSquarePlus, Plus, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -40,13 +41,21 @@ import {
   agentSelectedWorktreeAtom,
 } from '@/atoms/agent-atoms'
 import type { AgentSidePanelTab, AgentFileSourceFilter } from '@/atoms/agent-atoms'
-import { agentSideChatMapAtom } from '@/atoms/chat-atoms'
+import { agentSideChatMapAtom, conversationsAtom } from '@/atoms/chat-atoms'
+import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
+import { useOpenSideChat } from '@/hooks/useOpenSideChat'
 import { interfaceVariantAtom } from '@/atoms/theme'
 import { previewFileMapAtom } from '@/atoms/preview-atoms'
 import { useOpenPreview } from '@/components/diff/preview-opener'
 import { detectIsWindows } from '@/lib/platform'
-import type { FileEntry, AgentPendingFile } from '@proma/shared'
+import { formatRelativeUpdatedAt } from '@/lib/time-format'
+import type { FileEntry, AgentPendingFile, ConversationMeta } from '@proma/shared'
 import { setFilePanelDragData, getMediaTypeFromFilename, dispatchInsertFileMention } from '@/lib/file-panel-drag'
+
+// ===== 常量 =====
+
+/** 右侧「查看现有问答」列表最多展示的会话数 */
+const VIEWABLE_CONVERSATIONS_LIMIT = 30
 
 function getPathBasename(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath
@@ -425,9 +434,57 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const sideChatMap = useAtomValue(agentSideChatMapAtom)
   const setSideChatMap = useSetAtom(agentSideChatMapAtom)
   const sideChatConversationId = sideChatMap.get(sessionId) ?? null
-  const effectiveActiveTab: AgentSidePanelTab = activeTab === 'chat' && !sideChatConversationId
+
+  // === 右侧问答 Tab：查看现有对话列表 ===
+  const [conversations, setConversations] = useAtom(conversationsAtom)
+  const draftSessionIds = useAtomValue(draftSessionIdsAtom)
+  /** 可选的现有问答对话（当前 Agent 会话的 agent-side-qa，非归档且非草稿，按更新时间倒序，最多 30 条） */
+  const viewableConversations = React.useMemo(
+    () => conversations
+      .filter((c) =>
+        c.sourceType === 'agent-side-qa'
+        && c.parentAgentSessionId === sessionId
+        && !c.archived
+        && !draftSessionIds.has(c.id),
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, VIEWABLE_CONVERSATIONS_LIMIT),
+    [conversations, draftSessionIds, sessionId],
+  )
+  const hasViewableConversations = viewableConversations.length > 0
+
+  // 相对时间基准：60 秒刷新一次，避免面板停留时列表时间标签过期
+  const [relativeTimeNow, setRelativeTimeNow] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    const id = window.setInterval(() => setRelativeTimeNow(Date.now()), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  /** 无问答会话时隐藏「问答」Tab；有绑定对话或可选现有对话时展示 */
+  const effectiveActiveTab: AgentSidePanelTab = activeTab === 'chat' && !sideChatConversationId && !hasViewableConversations
     ? 'files'
     : activeTab
+
+  /** 从「查看现有问答」列表选择对话并绑定为当前会话的侧边问答 */
+  const handleOpenExistingChat = React.useCallback((conversationId: string) => {
+    setSideChatMap((prev) => {
+      const next = new Map(prev)
+      next.set(sessionId, conversationId)
+      return next
+    })
+  }, [sessionId, setSideChatMap])
+
+  /** 在右侧面板直接新建问答对话（无选区上下文） */
+  const openSideChat = useOpenSideChat({
+    title: '右侧问答',
+    sourceKind: 'side-panel',
+    draft: null,
+    errorLogPrefix: 'SidePanel',
+  })
+
+  const handleCreateSideChat = React.useCallback(async (): Promise<void> => {
+    await openSideChat(sessionId, null)
+  }, [openSideChat, sessionId])
 
   const handleCloseChatTab = React.useCallback(() => {
     setSideChatMap((prev) => {
@@ -440,6 +497,37 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       onTabChange('files')
     }
   }, [activeTab, onTabChange, sessionId, setSideChatMap])
+
+  /** 删除问答对话（「查看现有问答」列表行删除按钮） */
+  const handleDeleteSideChat = React.useCallback(async (conversationId: string): Promise<void> => {
+    const targetTitle = conversations.find((c) => c.id === conversationId)?.title ?? conversationId
+    if (!window.confirm(`确定删除问答「${targetTitle}」吗？删除后不可恢复。`)) return
+    try {
+      await window.electronAPI.deleteConversation(conversationId)
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId))
+      // 若删除的是当前绑定会话，解绑并回到列表
+      if (sideChatConversationId === conversationId) {
+        setSideChatMap((prev) => {
+          const next = new Map(prev)
+          next.delete(sessionId)
+          return next
+        })
+      }
+      toast.success('已删除问答对话')
+    } catch (error) {
+      console.error('[SidePanel] 删除问答对话失败:', error)
+      toast.error('删除问答对话失败')
+    }
+  }, [conversations, setConversations, setSideChatMap, sideChatConversationId, sessionId])
+
+  // 激活态写回：无会话且无可选对话时「问答」Tab 被 effectiveActiveTab 兜底隐藏，
+  // 但持久化 atom 仍停留在 chat。这里用 effect 写回 files，避免后续会话切换、
+  // 全局出现新对话时视图无操作跳变（不 setState，避免渲染期写状态）。
+  React.useEffect(() => {
+    if (activeTab === 'chat' && !sideChatConversationId && !hasViewableConversations) {
+      onTabChange('files')
+    }
+  }, [activeTab, sideChatConversationId, hasViewableConversations, onTabChange])
 
 
   return (
@@ -466,17 +554,43 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
             onTabChange={onTabChange}
             onClose={() => setIsOpen(false)}
             onCloseChat={handleCloseChatTab}
-            showChatTab={Boolean(sideChatConversationId)}
+            showChatTab={Boolean(sideChatConversationId) || hasViewableConversations}
             isWindows={isWindows}
           />
 
           {effectiveActiveTab === 'chat' ? (
             sideChatConversationId ? (
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ChatView conversationId={sideChatConversationId} />
+                <ChatView conversationId={sideChatConversationId} variant="side-qa" />
               </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">暂无问答会话</div>
+              <div className="flex-1 min-h-0 flex flex-col">
+                {/* 头部：查看现有问答 + 新建入口 */}
+                <div className="flex items-center justify-between px-3 pt-2 pb-1 flex-shrink-0">
+                  <span className="text-[11px] font-medium text-foreground/40 select-none">查看现有问答</span>
+                  <button
+                    type="button"
+                    onClick={() => { void handleCreateSideChat() }}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-foreground/45 transition-colors hover:bg-foreground/[0.055] hover:text-foreground/75"
+                  >
+                    <Plus className="size-3" />
+                    新建问答
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-2 pb-2">
+                  <div className="flex flex-col gap-0.5">
+                    {viewableConversations.map((conv) => (
+                      <SideChatConversationRow
+                        key={conv.id}
+                        conversation={conv}
+                        relativeTimeNow={relativeTimeNow}
+                        onSelect={handleOpenExistingChat}
+                        onDelete={handleDeleteSideChat}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
             )
           ) : effectiveActiveTab === 'changes' ? (
             sessionPath ? (
@@ -1355,3 +1469,43 @@ function AttachedDirItem({ entry, depth, selectedPaths, onSelect, refreshVersion
     </>
   )
 }
+
+// ===== 右侧问答「查看现有问答」列表行 =====
+
+interface SideChatConversationRowProps {
+  conversation: ConversationMeta
+  /** 当前相对时间基准（父级 60 秒刷新），保证停留时标签不过期 */
+  relativeTimeNow: number
+  onSelect: (conversationId: string) => void
+  /** 删除问答对话（hover 显示删除按钮） */
+  onDelete: (conversationId: string) => void
+}
+
+/** 右侧问答列表行 — 样式对齐左侧边栏对话列表项（memo 惯例同 ConversationItem） */
+const SideChatConversationRow = React.memo(function SideChatConversationRow({ conversation, relativeTimeNow, onSelect, onDelete }: SideChatConversationRowProps): React.ReactElement {
+  return (
+    <div className="group relative w-full flex items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1.5 transition-colors duration-100 hover:bg-foreground/[0.03]">
+      <button
+        type="button"
+        onClick={() => onSelect(conversation.id)}
+        className="min-w-0 flex-1 text-left"
+        title={`打开问答：${conversation.title}`}
+      >
+        <span className="block truncate text-[13px] leading-[18px] text-foreground/80 group-hover:text-foreground">
+          {conversation.title}
+        </span>
+      </button>
+      <span className="flex-shrink-0 text-[11px] leading-[18px] tabular-nums text-foreground/35">
+        {formatRelativeUpdatedAt(conversation.updatedAt, relativeTimeNow)}
+      </span>
+      <button
+        type="button"
+        onClick={() => onDelete(conversation.id)}
+        className="flex-shrink-0 rounded p-0.5 text-foreground/35 opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+        title="删除问答对话"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+    </div>
+  )
+})

@@ -166,6 +166,31 @@ export interface ConversationMeta {
   pinned?: boolean
   /** 是否已归档 */
   archived?: boolean
+  /** 会话类型：普通聊天为 chat，Agent 支线追问面板为 agent-side-qa（旧数据缺省视为 chat） */
+  sourceType?: 'chat' | 'agent-side-qa'
+  /** 归属的 Agent 会话 ID（agent-side-qa 会话用于关联来源 Agent 会话） */
+  parentAgentSessionId?: string
+  /** 首问选区来源：Agent 历史 / 文件 / 便签 / 侧边面板 */
+  sourceKind?: 'agent-history' | 'file' | 'scratch-pad' | 'side-panel'
+  /** 来源引用：messageId / filePath */
+  sourceRef?: string
+  /** 来源展示标签（列表与标题中展示的简短描述） */
+  sourceLabel?: string
+  /** 首问引用种子：用于追问延续的选区上下文 */
+  seedSelection?: {
+    /** 选中的原文 */
+    text: string
+    /** 来源类型：Agent 历史 / 文件 / 便签 */
+    sourceType: 'file' | 'agent-history' | 'scratch-pad'
+    /** 来源展示标签 */
+    sourceLabel?: string
+    /** 来源文件路径（文件来源时） */
+    filePath?: string
+    /** 来源消息 ID（消息来源时） */
+    messageId?: string
+    /** 来源消息角色（消息来源时） */
+    messageRole?: 'user' | 'assistant' | 'system'
+  }
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -370,6 +395,8 @@ export const CHAT_IPC_CHANNELS = {
   DELETE_CONVERSATION: 'chat:delete-conversation',
   /** 更新对话使用的模型/渠道 */
   UPDATE_MODEL: 'chat:update-conversation-model',
+  /** 清空对话的首问引用种子（用户手动移除引用 chip 后调用） */
+  CLEAR_SEED_SELECTION: 'chat:clear-seed-selection',
 
   // 消息发送
   /** 发送消息（触发 AI 流式响应） */

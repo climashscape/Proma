@@ -292,7 +292,17 @@ export interface ElectronAPI {
   listConversations: () => Promise<ConversationMeta[]>
 
   /** 创建对话 */
-  createConversation: (title?: string, modelId?: string, channelId?: string) => Promise<ConversationMeta>
+  createConversation: (
+    title?: string,
+    modelId?: string,
+    channelId?: string,
+    sourceType?: ConversationMeta['sourceType'],
+    parentAgentSessionId?: string,
+    sourceKind?: ConversationMeta['sourceKind'],
+    sourceRef?: string,
+    sourceLabel?: string,
+    seedSelection?: ConversationMeta['seedSelection'],
+  ) => Promise<ConversationMeta>
 
   /** 获取对话消息 */
   getConversationMessages: (id: string) => Promise<ChatMessage[]>
@@ -308,6 +318,9 @@ export interface ElectronAPI {
 
   /** 删除对话 */
   deleteConversation: (id: string) => Promise<void>
+
+  /** 清空对话的首问引用种子（用户手动移除引用 chip 后调用） */
+  clearConversationSeedSelection: (id: string) => Promise<ConversationMeta>
 
   /** 切换对话置顶状态 */
   togglePinConversation: (id: string) => Promise<ConversationMeta>
@@ -1393,8 +1406,29 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(CHAT_IPC_CHANNELS.LIST_CONVERSATIONS)
   },
 
-  createConversation: (title?: string, modelId?: string, channelId?: string) => {
-    return ipcRenderer.invoke(CHAT_IPC_CHANNELS.CREATE_CONVERSATION, title, modelId, channelId)
+  createConversation: (
+    title?: string,
+    modelId?: string,
+    channelId?: string,
+    sourceType?: ConversationMeta['sourceType'],
+    parentAgentSessionId?: string,
+    sourceKind?: ConversationMeta['sourceKind'],
+    sourceRef?: string,
+    sourceLabel?: string,
+    seedSelection?: ConversationMeta['seedSelection'],
+  ) => {
+    return ipcRenderer.invoke(
+      CHAT_IPC_CHANNELS.CREATE_CONVERSATION,
+      title,
+      modelId,
+      channelId,
+      sourceType,
+      parentAgentSessionId,
+      sourceKind,
+      sourceRef,
+      sourceLabel,
+      seedSelection,
+    )
   },
 
   getConversationMessages: (id: string) => {
@@ -1415,6 +1449,10 @@ const electronAPI: ElectronAPI = {
 
   deleteConversation: (id: string) => {
     return ipcRenderer.invoke(CHAT_IPC_CHANNELS.DELETE_CONVERSATION, id)
+  },
+
+  clearConversationSeedSelection: (id: string) => {
+    return ipcRenderer.invoke(CHAT_IPC_CHANNELS.CLEAR_SEED_SELECTION, id)
   },
 
   togglePinConversation: (id: string) => {

@@ -51,10 +51,12 @@ export function useFocusAgentSessionInput(): FocusAgentSessionInput {
     }
 
     // 等待 AgentView 成为当前内容，再复用其既有输入框聚焦事件。
+    // 显式携带 conversationId: null（null = 仅 Agent 目标），
+    // 让 ChatInput（含右侧问答）精确寻址时跳过，避免焦点竞争。
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (store.get(activeTabIdAtom) !== agentTab.id) return
-        window.dispatchEvent(new CustomEvent('proma:focus-input'))
+        window.dispatchEvent(new CustomEvent('proma:focus-input', { detail: { conversationId: null } }))
       })
     })
 

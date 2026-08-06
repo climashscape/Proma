@@ -180,6 +180,7 @@ import {
   getRecentMessages,
   updateConversationMeta,
   deleteConversation,
+  clearConversationSeedSelection,
   deleteMessage,
   truncateMessagesFrom,
   updateContextDividers,
@@ -1370,8 +1371,29 @@ export function registerIpcHandlers(): void {
   // 创建对话
   ipcMain.handle(
     CHAT_IPC_CHANNELS.CREATE_CONVERSATION,
-    async (_, title?: string, modelId?: string, channelId?: string): Promise<ConversationMeta> => {
-      return createConversation(title, modelId, channelId)
+    async (
+      _,
+      title?: string,
+      modelId?: string,
+      channelId?: string,
+      sourceType?: ConversationMeta['sourceType'],
+      parentAgentSessionId?: string,
+      sourceKind?: ConversationMeta['sourceKind'],
+      sourceRef?: string,
+      sourceLabel?: string,
+      seedSelection?: ConversationMeta['seedSelection'],
+    ): Promise<ConversationMeta> => {
+      return createConversation(
+        title,
+        modelId,
+        channelId,
+        sourceType,
+        parentAgentSessionId,
+        sourceKind,
+        sourceRef,
+        sourceLabel,
+        seedSelection,
+      )
     }
   )
 
@@ -1404,6 +1426,14 @@ export function registerIpcHandlers(): void {
     CHAT_IPC_CHANNELS.UPDATE_MODEL,
     async (_, id: string, modelId: string, channelId: string): Promise<ConversationMeta> => {
       return updateConversationMeta(id, { modelId, channelId })
+    }
+  )
+
+  // 清空对话的首问引用种子（用户手动移除引用 chip 后调用）
+  ipcMain.handle(
+    CHAT_IPC_CHANNELS.CLEAR_SEED_SELECTION,
+    async (_, id: string): Promise<ConversationMeta> => {
+      return clearConversationSeedSelection(id)
     }
   )
 

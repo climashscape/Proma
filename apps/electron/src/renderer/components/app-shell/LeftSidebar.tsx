@@ -97,6 +97,7 @@ import {
   type SessionMiniMapType,
 } from '@/components/session-preview/SessionMiniMapPopover'
 import { detectIsMac } from '@/lib/platform'
+import { formatRelativeUpdatedAt } from '@/lib/time-format'
 import { ShortcutKeycaps } from '@/components/shortcuts/ShortcutKeycaps'
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
 import {
@@ -348,22 +349,6 @@ const ACTIVE_SESSION_STATUS_PRIORITY: Record<SessionIndicatorStatus, number> = {
   running: 1,
   completed: 2,
   idle: 3,
-}
-
-function formatRelativeUpdatedAt(updatedAt: number, now: number): string {
-  const diff = Math.max(0, now - updatedAt)
-  const minute = 60_000
-  const hour = 60 * minute
-  const day = 24 * hour
-  const month = 30 * day
-  const year = 365 * day
-
-  if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))} 分钟`
-  if (diff < day) return `${Math.floor(diff / hour)} 小时`
-  if (diff < month) return `${Math.floor(diff / day)} 天`
-  if (diff < year) return `${Math.floor(diff / month)} 月`
-  return `${Math.floor(diff / year)} 年`
 }
 
 /** 按 updatedAt 将项目分为 今天 / 昨天 / 更早 三组 */
@@ -961,9 +946,9 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
       .catch(console.error)
   }, [currentWorkspaceSlug, mode, activeView, capabilitiesVersion])
 
-  /** 置顶对话列表（仅活跃模式显示，排除 draft） */
+  /** 置顶对话列表（仅活跃模式显示，排除 draft 与问答会话） */
   const pinnedConversations = React.useMemo(
-    () => viewMode === 'active' ? conversations.filter((c) => c.pinned && !draftSessionIds.has(c.id)) : [],
+    () => viewMode === 'active' ? conversations.filter((c) => c.sourceType !== 'agent-side-qa' && c.pinned && !draftSessionIds.has(c.id)) : [],
     [conversations, viewMode, draftSessionIds]
   )
 
@@ -993,20 +978,20 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     [agentSessions, draftSessionIds, pinnedAgentSessions],
   )
 
-  /** 对话按日期分组（根据 viewMode 过滤归档状态，排除 draft） */
+  /** 对话按日期分组（根据 viewMode 过滤归档状态，排除 draft 与问答会话） */
   const conversationGroups = React.useMemo(
     () => {
       const filtered = viewMode === 'archived'
-        ? conversations.filter((c) => c.archived && !draftSessionIds.has(c.id))
-        : conversations.filter((c) => !c.archived && !c.pinned && !draftSessionIds.has(c.id))
+        ? conversations.filter((c) => c.sourceType !== 'agent-side-qa' && c.archived && !draftSessionIds.has(c.id))
+        : conversations.filter((c) => c.sourceType !== 'agent-side-qa' && !c.archived && !c.pinned && !draftSessionIds.has(c.id))
       return groupByDate(filtered)
     },
     [conversations, viewMode, draftSessionIds]
   )
 
-  /** 已归档对话数量 */
+  /** 已归档对话数量（排除问答会话，保持与归档列表一致） */
   const archivedConversationCount = React.useMemo(
-    () => conversations.filter((c) => c.archived).length,
+    () => conversations.filter((c) => c.sourceType !== 'agent-side-qa' && c.archived).length,
     [conversations]
   )
 
@@ -1200,6 +1185,24 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
         ? getDirectDelegatedChildren(store.get(agentSessionsAtom), pendingDeleteId).map((child) => child.id)
         : []
       try {
+        // 级联删除该 Agent 会话的问答子会话（agent-side-qa），避免孤儿残留：
+        // 问答会话是标准 conversation（parentAgentSessionId 归属），左侧列表已过滤，
+        // 删除父会话时若不清理将留下无入口的数据文件。
+        const qaConversationIds = store
+          .get(conversationsAtom)
+          .filter((c) => c.sourceType === 'agent-side-qa' && c.parentAgentSessionId === pendingDeleteId)
+          .map((c) => c.id)
+        if (qaConversationIds.length > 0) {
+          for (const qaId of qaConversationIds) {
+            try {
+              await window.electronAPI.deleteConversation(qaId)
+            } catch (error) {
+              console.error(`[侧边栏] 级联删除问答会话失败 (${qaId}):`, error)
+            }
+            cleanupMapAtoms(qaId)
+          }
+          setConversations((prev) => prev.filter((c) => !qaConversationIds.includes(c.id)))
+        }
         // 先删子后删父：若子会话删除中途失败，父会话仍在，UI 一致性更好。
         if (childIds.length > 0) {
           const failedChildIds: string[] = []
@@ -2241,7 +2244,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const railRecentItems = React.useMemo(() => {
     if (mode === 'chat') {
       return conversations
-        .filter((c) => !c.archived && !draftSessionIds.has(c.id))
+        .filter((c) => c.sourceType !== 'agent-side-qa' && !c.archived && !draftSessionIds.has(c.id))
         .sort((a, b) => {
           const activeDelta = Number(b.id === activeSessionId) - Number(a.id === activeSessionId)
           if (activeDelta !== 0) return activeDelta
